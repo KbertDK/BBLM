@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model League {
+  id        String   @id @default(cuid())
+  name      String
+  season    Int
+  createdAt DateTime @default(now())
+  teams     Team[]
+  matches   Match[]
+}
+
+model Coach {
+  id        String     @id @default(cuid())
+  name      String
+  email     String     @unique
+  teams     Team[]
+  newsPosts NewsPost[]
+  createdAt DateTime   @default(now())
+}
+
+model Race {
+  id            String       @id @default(cuid())
+  name          String       @unique
+  rosterSource  String
+  rerollPrice   Int
+  hasApothecary Boolean
+  teams         Team[]
+  playerTypes   PlayerType[]
+}
+
+model PlayerType {
+  id             String  @id @default(cuid())
+  raceId         String
+  race           Race    @relation(fields: [raceId], references: [id])
+  name           String
+  cost           Int
+  maxCount       Int
+  ma             Int
+  st             Int
+  ag             Int
+  av             Int
+  startingSkills Skill[]
+}
+
+enum SkillCategory {
+  G
+  A
+  P
+  S
+  M
+  E
+}
+
+model Skill {
+  id          String        @id @default(cuid())
+  skillId     Int           @unique
+  name        String        @unique
+  category    SkillCategory
+  skillRule   String
+  playerTypes PlayerType[]
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String
+  raceId      String
+  coachId     String
+  leagueId    String
+  race        Race     @relation(fields: [raceId], references: [id])
+  coach       Coach    @relation(fields: [coachId], references: [id])
+  league      League   @relation(fields: [leagueId], references: [id])
+  homeMatches Match[]  @relation("HomeTeam")
+  awayMatches Match[]  @relation("AwayTeam")
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  draws       Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model Match {
+  id          String      @id @default(cuid())
+  leagueId    String
+  league      League      @relation(fields: [leagueId], references: [id])
+  homeTeamId  String
+  awayTeamId  String
+  homeTeam    Team        @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam    Team        @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  scheduledAt DateTime
+  status      MatchStatus @default(SCHEDULED)
+  round       Int
+  homeScore   Int?
+  awayScore   Int?
+  createdAt   DateTime    @default(now())
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+}
+
+model NewsPost {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  authorId  String
+  author    Coach    @relation(fields: [authorId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
