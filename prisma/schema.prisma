@@ -140,11 +140,17 @@ model Team {
   division    Division? @relation(fields: [divisionId], references: [id], onDelete: SetNull)
   homeMatches Match[]   @relation("HomeTeam")
   awayMatches Match[]   @relation("AwayTeam")
-  wins        Int          @default(0)
-  losses      Int          @default(0)
-  draws       Int          @default(0)
-  players     TeamPlayer[]
-  createdAt   DateTime     @default(now())
+  wins             Int          @default(0)
+  losses           Int          @default(0)
+  draws            Int          @default(0)
+  treasury         Int          @default(0)
+  rerolls          Int          @default(0)
+  assistantCoaches Int          @default(0)
+  cheerleaders     Int          @default(0)
+  fanFactor        Int          @default(0)
+  apothecary       Boolean      @default(false)
+  players          TeamPlayer[]
+  createdAt        DateTime     @default(now())
 }
 
 enum PlayerStatus {
@@ -166,6 +172,10 @@ model TeamPlayer {
   touchdowns     Int          @default(0)
   interceptions  Int          @default(0)
   casualties     Int          @default(0)
+  mvp            Int          @default(0)
+  ssp            Int          @default(0)
+  niggling       String       @default("")
+  value          Int          @default(0)
   createdAt      DateTime     @default(now())
 }
 

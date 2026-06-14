@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getRaceById } from '@/lib/queries/races'
+import { getRaceLogo } from '@/lib/race-logo'
 
 export const revalidate = 300
 
@@ -30,6 +31,8 @@ export default async function RaceDetailPage({ params }: Props) {
   const race = await getRaceById(params.id)
   if (!race) notFound()
 
+  const raceLogo = getRaceLogo(race.name)
+
   return (
     <div className="min-h-screen bg-bb-navy">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-14">
@@ -43,9 +46,14 @@ export default async function RaceDetailPage({ params }: Props) {
 
         {/* Race header */}
         <div className="mb-10">
-          <h1 className="font-heading text-4xl font-black text-bb-gold tracking-widest uppercase mb-4">
-            {race.name}
-          </h1>
+          <div className="flex items-center gap-5 mb-4">
+            {raceLogo && (
+              <img src={raceLogo} alt={race.name} className="w-20 h-20 object-contain shrink-0" />
+            )}
+            <h1 className="font-heading text-4xl font-black text-bb-gold tracking-widest uppercase">
+              {race.name}
+            </h1>
+          </div>
           <div className="flex flex-wrap gap-3">
             <div className="bg-bb-dark border border-bb-border rounded-sm px-4 py-3">
               <div className="text-bb-muted text-xs uppercase tracking-widest mb-0.5">Roster Source</div>

@@ -33,7 +33,7 @@ export async function getTeamById(id: string) {
   return prisma.team.findUnique({
     where: { id },
     include: {
-      race:     { select: { name: true, rerollPrice: true } },
+      race:     { select: { name: true, rerollPrice: true, hasApothecary: true } },
       coach:    { select: { name: true, alias: true } },
       division: { select: { name: true } },
       league: {
@@ -46,7 +46,7 @@ export async function getTeamById(id: string) {
         include: {
           playerType: {
             select: {
-              name: true, ma: true, st: true, ag: true, av: true,
+              name: true, ma: true, st: true, ag: true, av: true, cost: true,
               startingSkills: { select: { name: true, category: true, skillRule: true } },
             },
           },

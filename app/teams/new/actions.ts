@@ -39,7 +39,7 @@ export async function createTeam(formData: FormData) {
 
   let totalCost = 0
   let totalPlayers = 0
-  const playerRows: { playerTypeId: string; number: number }[] = []
+  const playerRows: { playerTypeId: string; number: number; value: number }[] = []
   let num = 1
 
   for (const { playerTypeId, count } of roster) {
@@ -47,7 +47,7 @@ export async function createTeam(formData: FormData) {
     if (!pt || count < 0 || count > pt.maxCount) return
     totalCost    += pt.cost * count
     totalPlayers += count
-    for (let i = 0; i < count; i++) playerRows.push({ playerTypeId, number: num++ })
+    for (let i = 0; i < count; i++) playerRows.push({ playerTypeId, number: num++, value: pt.cost })
   }
 
   if (totalCost > league.ruleSet.startIncome)     return

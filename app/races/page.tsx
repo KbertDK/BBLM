@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { getAllRaces } from '@/lib/queries/races'
 import SectionHeading from '@/components/ui/SectionHeading'
+import { getRaceLogo } from '@/lib/race-logo'
 
 export const revalidate = 3600
 
@@ -38,8 +39,11 @@ export default async function RacesPage() {
                 href={`/races/${race.id}`}
                 className="grid grid-cols-12 items-center px-5 py-3.5 gap-3 border-b border-bb-border last:border-0 hover:bg-bb-gold/5 transition-colors group"
               >
-                <div className="col-span-4 font-heading font-bold text-sm text-white group-hover:text-bb-gold transition-colors">
-                  {race.name}
+                <div className="col-span-4 flex items-center gap-2.5">
+                  {(() => { const logo = getRaceLogo(race.name); return logo ? <img src={logo} alt="" className="w-8 h-8 object-contain shrink-0" /> : null })()}
+                  <span className="font-heading font-bold text-sm text-white group-hover:text-bb-gold transition-colors min-w-0 truncate">
+                    {race.name}
+                  </span>
                 </div>
                 <div className="col-span-3">
                   <span className={`text-xs px-1.5 py-0.5 rounded-sm border ${sourceStyle}`}>
