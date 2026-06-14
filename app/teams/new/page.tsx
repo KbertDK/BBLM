@@ -1,21 +1,65 @@
-import Link from 'next/link'
+import { redirect } from 'next/navigation'
+import prisma from '@/lib/prisma'
+import { getSession } from '@/lib/auth'
+import { TeamCreatorForm } from './TeamCreatorForm'
 
-export default function NewTeamPage() {
+export const dynamic = 'force-dynamic'
+
+export default async function NewTeamPage({
+  searchParams,
+}: {
+  searchParams: { raceId?: string }
+}) {
+  const session = await getSession()
+  if (!session) redirect('/auth/login')
+
+  const raceId = searchParams.raceId
+
+  const [races, leaguesRaw, playerTypes] = await Promise.all([
+    prisma.race.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.league.findMany({
+      where: {
+        isHidden: false,
+        status:   { not: 'ENDED' },
+        ruleSet:  { status: 'ACTIVE' },
+      },
+      include: {
+        ruleSet: {
+          select: { name: true, startIncome: true, numberOfPlayers: true, gameType: true },
+        },
+      },
+      orderBy: { name: 'asc' },
+    }),
+    raceId
+      ? prisma.playerType.findMany({
+          where:   { raceId },
+          orderBy: { cost: 'desc' },
+          include: { startingSkills: { select: { name: true, category: true } } },
+        })
+      : Promise.resolve([]),
+  ])
+
+  // Narrow the type: filter guarantees ruleSet is non-null
+  const leagues = leaguesRaw
+    .filter((l): l is typeof l & { ruleSet: NonNullable<typeof l.ruleSet> } => l.ruleSet !== null)
+    .map((l) => ({
+      id:     l.id,
+      name:   l.name,
+      season: l.season,
+      ruleSet: {
+        name:            l.ruleSet.name,
+        startIncome:     l.ruleSet.startIncome,
+        numberOfPlayers: l.ruleSet.numberOfPlayers,
+        gameType:        l.ruleSet.gameType as string,
+      },
+    }))
+
   return (
-    <div className="min-h-screen bg-bb-navy flex flex-col items-center justify-center gap-6 px-4">
-      <div className="font-heading text-bb-gold/50 text-5xl font-black">⚔</div>
-      <h1 className="font-heading text-bb-gold text-3xl font-bold tracking-widest uppercase text-center">
-        Team Recruitment
-      </h1>
-      <p className="text-bb-muted text-center max-w-sm">
-        The team creation form arrives in Phase 2. Choose your race, hire your players, and prepare for glory.
-      </p>
-      <Link
-        href="/"
-        className="px-6 py-3 border border-bb-gold/40 text-bb-gold text-sm font-heading tracking-widest uppercase hover:bg-bb-gold/10 transition-colors rounded-sm"
-      >
-        Back to League
-      </Link>
-    </div>
+    <TeamCreatorForm
+      races={races}
+      leagues={leagues}
+      playerTypes={playerTypes}
+      preselectedRaceId={raceId}
+    />
   )
 }

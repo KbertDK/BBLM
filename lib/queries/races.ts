@@ -25,6 +25,8 @@ export interface PlayerTypeSummary {
   st: number
   ag: number
   av: number
+  skillRollDouble: string
+  skillRollNormal: string
   startingSkills: SkillRef[]
 }
 
@@ -72,15 +74,17 @@ export async function getRaceById(id: string): Promise<RaceDetail | null> {
     hasApothecary: race.hasApothecary,
     teamCount:     race._count.teams,
     playerTypes:   race.playerTypes.map((p) => ({
-      id:             p.id,
-      name:           p.name,
-      cost:           p.cost,
-      maxCount:       p.maxCount,
-      ma:             p.ma,
-      st:             p.st,
-      ag:             p.ag,
-      av:             p.av,
-      startingSkills: p.startingSkills.map((s) => ({
+      id:              p.id,
+      name:            p.name,
+      cost:            p.cost,
+      maxCount:        p.maxCount,
+      ma:              p.ma,
+      st:              p.st,
+      ag:              p.ag,
+      av:              p.av,
+      skillRollDouble: p.skillRollDouble,
+      skillRollNormal: p.skillRollNormal,
+      startingSkills:  p.startingSkills.map((s) => ({
         id:        s.id,
         name:      s.name,
         category:  s.category,

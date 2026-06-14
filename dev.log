@@ -1,0 +1,95 @@
+
+> bblm@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.5.19
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.1.140:3000
+   - Environments: .env
+
+ ✓ Starting...
+ ✓ Ready in 1746ms
+ ✓ Compiled /middleware in 366ms (169 modules)
+ ○ Compiling /league-management ...
+ ✓ Compiled /league-management in 2.2s (694 modules)
+ ✓ Compiled in 836ms (239 modules)
+ GET /league-management 200 in 3647ms
+ POST /league-management 200 in 182ms
+ POST /league-management 200 in 164ms
+ ✓ Compiled /races in 467ms (688 modules)
+ GET /races 200 in 686ms
+ ✓ Compiled /races/[id] in 391ms (690 modules)
+Error: Route "/races/[id]" used `params.id`. `params` should be awaited before using its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at RaceDetailPage (app\races\[id]\page.tsx:30:41)
+  28 |
+  29 | export default async function RaceDetailPage({ params }: Props) {
+> 30 |   const race = await getRaceById(params.id)
+     |                                         ^
+  31 |   if (!race) notFound()
+  32 |
+  33 |   return (
+ GET /races/cmqcyypb20024xa7x3mwryszz 200 in 1136ms
+ ○ Compiling /teams/new ...
+ ✓ Compiled /teams/new in 1370ms (824 modules)
+Error: Route "/teams/new" used `searchParams.raceId`. `searchParams` should be awaited before using its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at NewTeamPage (app\teams\new\page.tsx:16:31)
+  14 |   if (!session) redirect('/auth/login')
+  15 |
+> 16 |   const raceId = searchParams.raceId
+     |                               ^
+  17 |
+  18 |   const [races, leaguesRaw, playerTypes] = await Promise.all([
+  19 |     prisma.race.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+ GET /teams/new?raceId=cmqcyypb20024xa7x3mwryszz 200 in 1651ms
+ ✓ Compiled /teams/[id] in 432ms (826 modules)
+Error: Route "/teams/[id]" used `params.id`. `params` should be awaited before using its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at TeamPage (app\teams\[id]\page.tsx:17:72)
+  15 |         Full team detail — roster, stats, match history — coming in Phase 2.
+  16 |       </p>
+> 17 |       <p className="text-bb-border text-xs font-mono">Team ID: {params.id}</p>
+     |                                                                        ^
+  18 |       <Link
+  19 |         href="/"
+  20 |         className="px-6 py-3 border border-bb-gold/40 text-bb-gold text-sm font-heading tracking-widest uppercase hover:bg-bb-gold/10 transition-colors rounded-sm"
+ GET /teams/cmqd1wza00001m8l35ykcabu8 200 in 1224ms
+ POST /teams/new?raceId=cmqcyypb20024xa7x3mwryszz 303 in 1395ms
+ ○ Compiling / ...
+ ✓ Compiled / in 528ms (883 modules)
+ GET / 200 in 851ms
+ GET /league-management 200 in 160ms
+ POST /league-management 200 in 168ms
+ ○ Compiling /teams ...
+ ✓ Compiled /teams in 549ms (883 modules)
+ GET /teams 200 in 786ms
+Error: Route "/teams/[id]" used `params.id`. `params` should be awaited before using its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at TeamPage (app\teams\[id]\page.tsx:17:72)
+  15 |         Full team detail — roster, stats, match history — coming in Phase 2.
+  16 |       </p>
+> 17 |       <p className="text-bb-border text-xs font-mono">Team ID: {params.id}</p>
+     |                                                                        ^
+  18 |       <Link
+  19 |         href="/"
+  20 |         className="px-6 py-3 border border-bb-gold/40 text-bb-gold text-sm font-heading tracking-widest uppercase hover:bg-bb-gold/10 transition-colors rounded-sm"
+ GET /teams/cmqd1wza00001m8l35ykcabu8 200 in 87ms
+ ✓ Compiled in 412ms (645 modules)
+Error: Route "/teams/[id]" used `params.id`. `params` should be awaited before using its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at TeamPage (app\teams\[id]\page.tsx:17:72)
+  15 |         Full team detail — roster, stats, match history — coming in Phase 2.
+  16 |       </p>
+> 17 |       <p className="text-bb-border text-xs font-mono">Team ID: {params.id}</p>
+     |                                                                        ^
+  18 |       <Link
+  19 |         href="/"
+  20 |         className="px-6 py-3 border border-bb-gold/40 text-bb-gold text-sm font-heading tracking-widest uppercase hover:bg-bb-gold/10 transition-colors rounded-sm"
+ GET /teams/cmqd1wza00001m8l35ykcabu8 200 in 293ms
+ ✓ Compiled in 811ms (894 modules)
+Error: Route "/teams/[id]" used `params.id`. `params` should be awaited before using its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at TeamPage (app\teams\[id]\page.tsx:59:41)
+  57 |
+  58 | export default async function TeamPage({ params }: Props) {
+> 59 |   const team = await getTeamById(params.id)
+     |                                         ^
+  60 |   if (!team) notFound()
+  61 |
+  62 |   const maxSlots   = team.league.ruleSet?.numberOfPlayers ?? 16
+ GET /teams/cmqd1wza00001m8l35ykcabu8 200 in 402ms

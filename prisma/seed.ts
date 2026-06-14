@@ -1,4 +1,5 @@
 import { PrismaClient, MatchStatus, SkillCategory } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
 
@@ -84,6 +85,158 @@ const SKILLS: { skillId: number; name: string; category: SkillCategory; skillRul
   { skillId: 111, name: 'Itchy',           category: 'E', skillRule: 'At the start of this player\'s activation, if they have not yet acted this turn and roll a 1 on a D6, they spend their turn scratching and may not perform any action.' },
   { skillId: 112, name: 'Titchy',          category: 'E', skillRule: 'This player is very small. They may ignore enemy tackle zones when dodging. However, opposing players do not benefit from this player\'s assists when blocking.' },
   { skillId: 113, name: 'Animosity',       category: 'E', skillRule: 'At the start of this player\'s activation, if they wish to Hand-Off or Pass to a team-mate of a different race, they must roll a D6. On a 2+ they may proceed normally; on a 1 they refuse and must perform a different action or do nothing.' },
+  { skillId: 114, name: 'Wild Animal',     category: 'E', skillRule: 'At the start of this player\'s activation, roll a D6. On a 1 or 2, the player cannot take a normal action — they must either Blitz (if possible) or do nothing. They may not be assisted on blocks and may not assist others.' },
+]
+
+const PLAYER_TYPES: {
+  race: string; name: string; maxCount: number
+  ma: number; st: number; ag: number; av: number
+  skills: string[]; skillRollDouble: string; skillRollNormal: string; cost: number
+}[] = [
+  // Amazon
+  { race: 'Amazon',        name: 'Linewoman',           maxCount: 16, ma: 6, st: 3, ag: 3, av:  7, skills: ['Dodge'],                                                                                                        skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  50000 },
+  { race: 'Amazon',        name: 'Thrower',             maxCount:  2, ma: 6, st: 3, ag: 3, av:  7, skills: ['Dodge', 'Pass'],                                                                                                 skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  70000 },
+  { race: 'Amazon',        name: 'Catcher',             maxCount:  2, ma: 6, st: 3, ag: 3, av:  7, skills: ['Catch', 'Dodge'],                                                                                                skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  70000 },
+  { race: 'Amazon',        name: 'Blitzer',             maxCount:  4, ma: 6, st: 3, ag: 3, av:  7, skills: ['Block', 'Dodge'],                                                                                                skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  // Apes of Wrath
+  { race: 'Apes of Wrath', name: 'Gorilla',             maxCount:  4, ma: 5, st: 4, ag: 2, av:  8, skills: ['Extra Arms', 'Grab', 'Wild Animal'],                                                                            skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  80000 },
+  { race: 'Apes of Wrath', name: 'Line Ape',            maxCount: 16, ma: 6, st: 3, ag: 3, av:  7, skills: ['Extra Arms'],                                                                                                    skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  50000 },
+  { race: 'Apes of Wrath', name: 'Runner',              maxCount:  2, ma: 7, st: 3, ag: 3, av:  7, skills: ['Wrestle', 'Extra Arms'],                                                                                         skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  80000 },
+  { race: 'Apes of Wrath', name: 'Silverback',          maxCount:  1, ma: 5, st: 5, ag: 1, av:  9, skills: ['Loner', 'Extra Arms', 'Grab', 'Wild Animal', 'Mighty Blow'],                                                    skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 130000 },
+  { race: 'Apes of Wrath', name: 'Thrower',              maxCount:  2, ma: 5, st: 3, ag: 3, av:  8, skills: ['Extra Arms', 'Big Hand', 'Strong Arm'],                                                                         skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  70000 },
+  // Brettonia
+  { race: 'Brettonia',     name: 'Blitzer',             maxCount:  4, ma: 8, st: 3, ag: 3, av:  8, skills: ['Block', 'Catch', 'Dauntless'],                                                                                   skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost: 120000 },
+  { race: 'Brettonia',     name: 'Lineman',             maxCount: 16, ma: 6, st: 3, ag: 2, av:  7, skills: ['Fend'],                                                                                                          skillRollDouble: 'ASP',  skillRollNormal: 'S',    cost:  40000 },
+  { race: 'Brettonia',     name: 'Yeoman',              maxCount:  4, ma: 6, st: 3, ag: 3, av:  8, skills: ['Wrestle'],                                                                                                       skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  70000 },
+  // Chaos
+  { race: 'Chaos',         name: 'Beastman',            maxCount: 16, ma: 6, st: 3, ag: 3, av:  8, skills: ['Horns'],                                                                                                         skillRollDouble: 'AP',   skillRollNormal: 'GSM',  cost:  60000 },
+  { race: 'Chaos',         name: 'Chaos Warrior',       maxCount:  4, ma: 5, st: 4, ag: 3, av:  9, skills: ['None'],                                                                                                          skillRollDouble: 'AP',   skillRollNormal: 'GSM',  cost: 100000 },
+  { race: 'Chaos',         name: 'Minotaur',            maxCount:  1, ma: 5, st: 5, ag: 2, av:  8, skills: ['Loner', 'Frenzy', 'Horns', 'Mighty Blow', 'Thick Skull', 'Wild Animal'],                                       skillRollDouble: 'GAP',  skillRollNormal: 'SM',   cost: 150000 },
+  // Chaos Dwarf
+  { race: 'Chaos Dwarf',   name: 'Hobgoblin',           maxCount: 16, ma: 6, st: 3, ag: 3, av:  7, skills: ['None'],                                                                                                          skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  40000 },
+  { race: 'Chaos Dwarf',   name: 'Chaos Dwarf Blocker', maxCount:  6, ma: 4, st: 3, ag: 2, av:  9, skills: ['Block', 'Tackle', 'Thick Skull'],                                                                                skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  70000 },
+  { race: 'Chaos Dwarf',   name: 'Bull Centaur',        maxCount:  2, ma: 6, st: 4, ag: 2, av:  9, skills: ['Sprint', 'Sure Feet', 'Thick Skull'],                                                                           skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost: 130000 },
+  { race: 'Chaos Dwarf',   name: 'Minotaur',            maxCount:  1, ma: 5, st: 5, ag: 2, av:  8, skills: ['Loner', 'Frenzy', 'Horns', 'Mighty Blow', 'Thick Skull', 'Wild Animal'],                                       skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 150000 },
+  // Chaos Pact
+  { race: 'Chaos Pact',    name: 'Marauder',            maxCount: 12, ma: 6, st: 3, ag: 3, av:  8, skills: ['None'],                                                                                                          skillRollDouble: 'A',    skillRollNormal: 'GSMP', cost:  50000 },
+  { race: 'Chaos Pact',    name: 'Goblin Renegade',     maxCount:  1, ma: 6, st: 2, ag: 3, av:  7, skills: ['Animosity', 'Dodge', 'Right Stuff', 'Stunty'],                                                                  skillRollDouble: 'GSP',  skillRollNormal: 'AM',   cost:  40000 },
+  { race: 'Chaos Pact',    name: 'Skaven Renegade',     maxCount:  1, ma: 7, st: 3, ag: 3, av:  7, skills: ['Animosity'],                                                                                                     skillRollDouble: 'ASP',  skillRollNormal: 'GM',   cost:  50000 },
+  { race: 'Chaos Pact',    name: 'Dark Elf Renegade',   maxCount:  1, ma: 6, st: 3, ag: 4, av:  8, skills: ['Animosity'],                                                                                                     skillRollDouble: 'SP',   skillRollNormal: 'GAM',  cost:  70000 },
+  { race: 'Chaos Pact',    name: 'Troll',               maxCount:  1, ma: 4, st: 5, ag: 1, av:  9, skills: ['Always Hungry', 'Loner', 'Mighty Blow', 'Really Stupid', 'Regeneration', 'Throw Team-Mate'],                   skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 110000 },
+  { race: 'Chaos Pact',    name: 'Ogre',                maxCount:  1, ma: 5, st: 5, ag: 2, av:  9, skills: ['Bone-head', 'Loner', 'Mighty Blow', 'Thick Skull', 'Throw Team-Mate'],                                         skillRollDouble: 'GAPM', skillRollNormal: 'S',    cost: 140000 },
+  { race: 'Chaos Pact',    name: 'Minotaur',            maxCount:  1, ma: 5, st: 5, ag: 2, av:  8, skills: ['Frenzy', 'Horns', 'Loner', 'Mighty Blow', 'Thick Skull', 'Wild Animal'],                                       skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 150000 },
+  // Daemons of Khorne
+  { race: 'Daemons of Khorne', name: 'Bloodletter Daemon', maxCount: 4, ma: 6, st: 3, ag: 3, av: 7, skills: ['Horns', 'Juggernaut', 'Regeneration'],                                                                         skillRollDouble: 'P',    skillRollNormal: 'GAS',  cost:  80000 },
+  { race: 'Daemons of Khorne', name: 'Bloodthirster',      maxCount: 1, ma: 6, st: 5, ag: 1, av: 9, skills: ['Loner', 'Wild Animal', 'Claw/Claws', 'Frenzy', 'Horns', 'Juggernaut', 'Regeneration'],                        skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 180000 },
+  { race: 'Daemons of Khorne', name: 'Khorne Herald',      maxCount: 2, ma: 6, st: 3, ag: 3, av: 8, skills: ['Frenzy', 'Horns', 'Juggernaut'],                                                                               skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Daemons of Khorne', name: 'Pit Fighter',        maxCount: 16,ma: 6, st: 3, ag: 3, av: 8, skills: ['Frenzy'],                                                                                                       skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  60000 },
+  // Dark Elf
+  { race: 'Dark Elf',      name: 'Lineman',             maxCount: 16, ma: 6, st: 3, ag: 4, av:  8, skills: ['None'],                                                                                                          skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  70000 },
+  { race: 'Dark Elf',      name: 'Runner',              maxCount:  2, ma: 7, st: 3, ag: 4, av:  7, skills: ['Dump-Off'],                                                                                                      skillRollDouble: 'S',    skillRollNormal: 'GAP',  cost:  80000 },
+  { race: 'Dark Elf',      name: 'Assassin',            maxCount:  2, ma: 6, st: 3, ag: 4, av:  7, skills: ['Shadowing', 'Stab'],                                                                                             skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  90000 },
+  { race: 'Dark Elf',      name: 'Witch Elf',           maxCount:  2, ma: 7, st: 3, ag: 4, av:  7, skills: ['Dodge', 'Frenzy', 'Jump Up'],                                                                                   skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost: 110000 },
+  { race: 'Dark Elf',      name: 'Blitzer',             maxCount:  4, ma: 7, st: 3, ag: 4, av:  8, skills: ['Block'],                                                                                                         skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost: 100000 },
+  // Dwarf
+  { race: 'Dwarf',         name: 'Longbeard',           maxCount: 16, ma: 4, st: 3, ag: 2, av:  9, skills: ['Block', 'Tackle', 'Thick Skull'],                                                                                skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  70000 },
+  { race: 'Dwarf',         name: 'Runner',              maxCount:  2, ma: 6, st: 3, ag: 3, av:  8, skills: ['Sure Hands', 'Thick Skull'],                                                                                     skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  80000 },
+  { race: 'Dwarf',         name: 'Blitzer',             maxCount:  2, ma: 5, st: 3, ag: 3, av:  9, skills: ['Block', 'Thick Skull'],                                                                                          skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  80000 },
+  { race: 'Dwarf',         name: 'Troll Slayer',        maxCount:  2, ma: 5, st: 3, ag: 2, av:  8, skills: ['Block', 'Dauntless', 'Frenzy', 'Thick Skull'],                                                                  skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Dwarf',         name: 'Deathroller',         maxCount:  1, ma: 4, st: 7, ag: 1, av: 10, skills: ['Break Tackle', 'Dirty Player', 'Juggernaut', 'Loner', 'Mighty Blow', 'No Hands', 'Secret Weapon', 'Stand Firm'], skillRollDouble: 'GAP', skillRollNormal: 'S',    cost: 160000 },
+  // Elf / Pro Elf  (CSV uses "Elf")
+  { race: 'Elf',           name: 'Lineman',             maxCount: 16, ma: 6, st: 3, ag: 4, av:  7, skills: ['None'],                                                                                                          skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  60000 },
+  { race: 'Elf',           name: 'Thrower',             maxCount:  2, ma: 6, st: 3, ag: 4, av:  7, skills: ['Pass'],                                                                                                          skillRollDouble: 'S',    skillRollNormal: 'GAP',  cost:  70000 },
+  { race: 'Elf',           name: 'Catcher',             maxCount:  4, ma: 8, st: 3, ag: 4, av:  7, skills: ['Catch', 'Nerves of Steel'],                                                                                      skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost: 100000 },
+  { race: 'Elf',           name: 'Blitzer',             maxCount:  2, ma: 7, st: 3, ag: 4, av:  8, skills: ['Block', 'Side Step'],                                                                                            skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost: 110000 },
+  // Goblin
+  { race: 'Goblin',        name: 'Goblin',              maxCount: 16, ma: 6, st: 2, ag: 3, av:  7, skills: ['Dodge', 'Right Stuff', 'Stunty'],                                                                               skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  40000 },
+  { race: 'Goblin',        name: 'Troll',               maxCount:  2, ma: 4, st: 5, ag: 1, av:  9, skills: ['Loner', 'Always Hungry', 'Mighty Blow', 'Really Stupid', 'Regeneration', 'Throw Team-Mate'],                   skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 110000 },
+  { race: 'Goblin',        name: 'Looney',              maxCount:  1, ma: 6, st: 2, ag: 3, av:  7, skills: ['Chainsaw', 'Dodge', 'Right Stuff', 'Secret Weapon', 'Stunty'],                                                  skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  40000 },
+  { race: 'Goblin',        name: 'Fanatic',             maxCount:  1, ma: 3, st: 7, ag: 3, av:  7, skills: ['Ball & Chain', 'No Hands', 'Secret Weapon', 'Stunty'],                                                          skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost:  70000 },
+  { race: 'Goblin',        name: 'Pogoer',              maxCount:  1, ma: 7, st: 2, ag: 3, av:  7, skills: ['Dodge', 'Leap', 'Stunty', 'Very Long Legs'],                                                                    skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  70000 },
+  { race: 'Goblin',        name: 'Bombardier',          maxCount:  1, ma: 6, st: 2, ag: 3, av:  7, skills: ['Bombardier', 'Dodge', 'Right Stuff', 'Secret Weapon', 'Stunty'],                                                skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  40000 },
+  // Halfling
+  { race: 'Halfling',      name: 'Halfling',            maxCount: 16, ma: 5, st: 2, ag: 3, av:  6, skills: ['Dodge', 'Right Stuff', 'Stunty'],                                                                               skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  30000 },
+  { race: 'Halfling',      name: 'Treeman',             maxCount:  2, ma: 2, st: 6, ag: 1, av: 10, skills: ['Loner', 'Mighty Blow', 'Stand Firm', 'Strong Arm', 'Take Root', 'Thick Skull', 'Throw Team-Mate'],              skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 120000 },
+  // High Elf
+  { race: 'High Elf',      name: 'Lineman',             maxCount: 16, ma: 6, st: 3, ag: 4, av:  8, skills: ['None'],                                                                                                          skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  70000 },
+  { race: 'High Elf',      name: 'Thrower',             maxCount:  2, ma: 6, st: 3, ag: 4, av:  8, skills: ['Pass', 'Safe Throw'],                                                                                            skillRollDouble: 'S',    skillRollNormal: 'GAP',  cost:  90000 },
+  { race: 'High Elf',      name: 'Catcher',             maxCount:  4, ma: 8, st: 3, ag: 4, av:  7, skills: ['Catch'],                                                                                                         skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  90000 },
+  { race: 'High Elf',      name: 'Blitzer',             maxCount:  2, ma: 7, st: 3, ag: 4, av:  8, skills: ['Block'],                                                                                                         skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost: 100000 },
+  // Human
+  { race: 'Human',         name: 'Lineman',             maxCount: 16, ma: 6, st: 3, ag: 3, av:  8, skills: ['None'],                                                                                                          skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  50000 },
+  { race: 'Human',         name: 'Catcher',             maxCount:  4, ma: 8, st: 2, ag: 3, av:  7, skills: ['Catch', 'Dodge'],                                                                                                skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  70000 },
+  { race: 'Human',         name: 'Thrower',             maxCount:  2, ma: 6, st: 3, ag: 3, av:  8, skills: ['Pass', 'Sure Hands'],                                                                                            skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  70000 },
+  { race: 'Human',         name: 'Blitzer',             maxCount:  4, ma: 7, st: 3, ag: 3, av:  8, skills: ['Block'],                                                                                                         skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Human',         name: 'Ogre',                maxCount:  1, ma: 5, st: 5, ag: 2, av:  9, skills: ['Loner', 'Bone-head', 'Mighty Blow', 'Thick Skull', 'Throw Team-Mate'],                                         skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 140000 },
+  // Khemri
+  { race: 'Khemri',        name: 'Skeleton',            maxCount: 16, ma: 5, st: 3, ag: 2, av:  7, skills: ['Regeneration', 'Thick Skull'],                                                                                   skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  40000 },
+  { race: 'Khemri',        name: 'Thro-Ra',             maxCount:  2, ma: 6, st: 3, ag: 2, av:  7, skills: ['Pass', 'Regeneration', 'Sure Hands'],                                                                           skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  70000 },
+  { race: 'Khemri',        name: 'Blitz-Ra',            maxCount:  2, ma: 6, st: 3, ag: 2, av:  8, skills: ['Block', 'Regeneration'],                                                                                         skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Khemri',        name: 'Tomb Guardian',       maxCount:  4, ma: 4, st: 5, ag: 1, av:  9, skills: ['Decay', 'Regeneration'],                                                                                         skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 100000 },
+  // Lizardmen  (CSV uses "Lizardman")
+  { race: 'Lizardman',     name: 'Skink',               maxCount: 16, ma: 8, st: 2, ag: 3, av:  7, skills: ['Dodge', 'Stunty'],                                                                                               skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  60000 },
+  { race: 'Lizardman',     name: 'Saurus',              maxCount:  6, ma: 6, st: 4, ag: 1, av:  9, skills: ['None'],                                                                                                          skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  80000 },
+  { race: 'Lizardman',     name: 'Kroxigor',            maxCount:  1, ma: 6, st: 5, ag: 1, av:  9, skills: ['Loner', 'Bone-head', 'Mighty Blow', 'Prehensile Tail', 'Thick Skull'],                                         skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 140000 },
+  // Necromantic
+  { race: 'Necromantic',   name: 'Zombie',              maxCount: 16, ma: 4, st: 3, ag: 2, av:  8, skills: ['Regeneration'],                                                                                                  skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  40000 },
+  { race: 'Necromantic',   name: 'Ghoul',               maxCount:  2, ma: 7, st: 3, ag: 3, av:  7, skills: ['Dodge'],                                                                                                         skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  70000 },
+  { race: 'Necromantic',   name: 'Wight',               maxCount:  2, ma: 6, st: 3, ag: 3, av:  8, skills: ['Block', 'Regeneration'],                                                                                         skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Necromantic',   name: 'Flesh Golem',         maxCount:  2, ma: 4, st: 4, ag: 2, av:  9, skills: ['Regeneration', 'Stand Firm', 'Thick Skull'],                                                                    skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost: 110000 },
+  { race: 'Necromantic',   name: 'Werewolf',            maxCount:  2, ma: 8, st: 3, ag: 3, av:  8, skills: ['Claw', 'Frenzy', 'Regeneration'],                                                                               skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost: 120000 },
+  // Norse
+  { race: 'Norse',         name: 'Lineman',             maxCount: 16, ma: 6, st: 3, ag: 3, av:  7, skills: ['Block'],                                                                                                         skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  50000 },
+  { race: 'Norse',         name: 'Thrower',             maxCount:  2, ma: 6, st: 3, ag: 3, av:  7, skills: ['Block', 'Pass'],                                                                                                 skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  70000 },
+  { race: 'Norse',         name: 'Runner',              maxCount:  2, ma: 7, st: 3, ag: 3, av:  7, skills: ['Block', 'Dauntless'],                                                                                            skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  90000 },
+  { race: 'Norse',         name: 'Berserker',           maxCount:  2, ma: 6, st: 3, ag: 3, av:  7, skills: ['Block', 'Frenzy', 'Jump Up'],                                                                                   skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Norse',         name: 'Ulfwerener',          maxCount:  2, ma: 6, st: 4, ag: 2, av:  8, skills: ['Frenzy'],                                                                                                        skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 110000 },
+  { race: 'Norse',         name: 'Yhetee',              maxCount:  1, ma: 5, st: 5, ag: 1, av:  8, skills: ['Claw', 'Disturbing Presence', 'Frenzy', 'Loner', 'Wild Animal'],                                                skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 140000 },
+  // Nurgle
+  { race: 'Nurgle',        name: 'Rotter',              maxCount: 16, ma: 5, st: 3, ag: 3, av:  8, skills: ['Decay', "Nurgle's Rot"],                                                                                         skillRollDouble: 'ASP',  skillRollNormal: 'GM',   cost:  40000 },
+  { race: 'Nurgle',        name: 'Pestigor',            maxCount:  4, ma: 6, st: 3, ag: 3, av:  8, skills: ['Horns', "Nurgle's Rot", 'Regeneration'],                                                                        skillRollDouble: 'AP',   skillRollNormal: 'GSM',  cost:  80000 },
+  { race: 'Nurgle',        name: 'Nurgle Warrior',      maxCount:  4, ma: 4, st: 4, ag: 2, av:  9, skills: ['Disturbing Presence', 'Foul Appearance', "Nurgle's Rot", 'Regeneration'],                                      skillRollDouble: 'AP',   skillRollNormal: 'GSM',  cost: 110000 },
+  { race: 'Nurgle',        name: 'Beast of Nurgle',     maxCount:  1, ma: 4, st: 5, ag: 1, av:  9, skills: ['Disturbing Presence', 'Foul Appearance', 'Loner', 'Mighty Blow', "Nurgle's Rot", 'Really Stupid', 'Regeneration', 'Tentacles'], skillRollDouble: 'GAP', skillRollNormal: 'SM', cost: 140000 },
+  // Ogre
+  { race: 'Ogre',          name: 'Snotling',            maxCount: 16, ma: 5, st: 1, ag: 3, av:  5, skills: ['Dodge', 'Right Stuff', 'Side Step', 'Stunty', 'Titchy'],                                                        skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  20000 },
+  { race: 'Ogre',          name: 'Ogre',                maxCount:  6, ma: 5, st: 5, ag: 2, av:  9, skills: ['Bone-head', 'Mighty Blow', 'Thick Skull', 'Throw Team-Mate'],                                                   skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 140000 },
+  // Orc
+  { race: 'Orc',           name: 'Lineman',             maxCount: 16, ma: 5, st: 3, ag: 3, av:  9, skills: ['None'],                                                                                                          skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  50000 },
+  { race: 'Orc',           name: 'Goblin',              maxCount:  4, ma: 6, st: 2, ag: 3, av:  7, skills: ['Dodge', 'Right Stuff', 'Stunty'],                                                                               skillRollDouble: 'GSP',  skillRollNormal: 'A',    cost:  40000 },
+  { race: 'Orc',           name: 'Thrower',             maxCount:  2, ma: 5, st: 3, ag: 3, av:  8, skills: ['Pass', 'Sure Hands'],                                                                                            skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  70000 },
+  { race: 'Orc',           name: 'Black Orc Blocker',   maxCount:  4, ma: 4, st: 4, ag: 2, av:  9, skills: ['None'],                                                                                                          skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost:  80000 },
+  { race: 'Orc',           name: 'Blitzer',             maxCount:  4, ma: 6, st: 3, ag: 3, av:  9, skills: ['Block'],                                                                                                         skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  80000 },
+  { race: 'Orc',           name: 'Troll',               maxCount:  1, ma: 4, st: 5, ag: 1, av:  9, skills: ['Loner', 'Always Hungry', 'Mighty Blow', 'Really Stupid', 'Regeneration', 'Throw Team-Mate'],                   skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 110000 },
+  // Skaven
+  { race: 'Skaven',        name: 'Lineman',             maxCount: 16, ma: 7, st: 3, ag: 3, av:  7, skills: ['None'],                                                                                                          skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  50000 },
+  { race: 'Skaven',        name: 'Thrower',             maxCount:  2, ma: 7, st: 3, ag: 3, av:  7, skills: ['Pass', 'Sure Hands'],                                                                                            skillRollDouble: 'AS',   skillRollNormal: 'GP',   cost:  70000 },
+  { race: 'Skaven',        name: 'Gutter Runner',       maxCount:  4, ma: 9, st: 2, ag: 4, av:  7, skills: ['Dodge'],                                                                                                         skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  80000 },
+  { race: 'Skaven',        name: 'Blitzer',             maxCount:  2, ma: 7, st: 3, ag: 3, av:  8, skills: ['Block'],                                                                                                         skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Skaven',        name: 'Rat Ogre',            maxCount:  1, ma: 6, st: 5, ag: 2, av:  8, skills: ['Frenzy', 'Loner', 'Mighty Blow', 'Prehensile Tail', 'Wild Animal'],                                             skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 150000 },
+  // Slann
+  { race: 'Slann',         name: 'Lineman',             maxCount: 16, ma: 6, st: 3, ag: 3, av:  8, skills: ['Leap', 'Very Long Legs'],                                                                                        skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  60000 },
+  { race: 'Slann',         name: 'Catcher',             maxCount:  4, ma: 7, st: 2, ag: 4, av:  7, skills: ['Diving Catch', 'Leap', 'Very Long Legs'],                                                                       skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  80000 },
+  { race: 'Slann',         name: 'Blitzer',             maxCount:  4, ma: 7, st: 3, ag: 3, av:  8, skills: ['Diving Tackle', 'Jump Up', 'Leap', 'Very Long Legs'],                                                           skillRollDouble: 'P',    skillRollNormal: 'GAS',  cost: 110000 },
+  { race: 'Slann',         name: 'Kroxigor',            maxCount:  1, ma: 6, st: 5, ag: 1, av:  9, skills: ['Bone-head', 'Loner', 'Mighty Blow', 'Prehensile Tail', 'Thick Skull'],                                         skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 140000 },
+  // Undead
+  { race: 'Undead',        name: 'Skeleton',            maxCount: 16, ma: 5, st: 3, ag: 2, av:  7, skills: ['Regeneration', 'Thick Skull'],                                                                                   skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  40000 },
+  { race: 'Undead',        name: 'Zombie',              maxCount: 16, ma: 4, st: 3, ag: 2, av:  8, skills: ['Regeneration'],                                                                                                  skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  40000 },
+  { race: 'Undead',        name: 'Ghoul',               maxCount:  4, ma: 7, st: 3, ag: 3, av:  7, skills: ['Dodge'],                                                                                                         skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  70000 },
+  { race: 'Undead',        name: 'Wight',               maxCount:  2, ma: 6, st: 3, ag: 3, av:  8, skills: ['Block', 'Regeneration'],                                                                                         skillRollDouble: 'AP',   skillRollNormal: 'GS',   cost:  90000 },
+  { race: 'Undead',        name: 'Mummy',               maxCount:  2, ma: 3, st: 5, ag: 1, av:  9, skills: ['Mighty Blow', 'Regeneration'],                                                                                   skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 120000 },
+  // Underworld
+  { race: 'Underworld',    name: 'Underworld Goblin',   maxCount: 12, ma: 6, st: 2, ag: 3, av:  7, skills: ['Dodge', 'Right Stuff', 'Stunty'],                                                                               skillRollDouble: 'GSP',  skillRollNormal: 'AM',   cost:  40000 },
+  { race: 'Underworld',    name: 'Skaven Lineman',      maxCount:  2, ma: 7, st: 3, ag: 3, av:  7, skills: ['Animosity'],                                                                                                     skillRollDouble: 'ASP',  skillRollNormal: 'GM',   cost:  50000 },
+  { race: 'Underworld',    name: 'Skaven Thrower',      maxCount:  2, ma: 7, st: 3, ag: 3, av:  7, skills: ['Animosity', 'Pass', 'Sure Hands'],                                                                              skillRollDouble: 'AS',   skillRollNormal: 'GPM',  cost:  70000 },
+  { race: 'Underworld',    name: 'Skaven Blitzer',      maxCount:  2, ma: 7, st: 3, ag: 3, av:  8, skills: ['Animosity', 'Block'],                                                                                            skillRollDouble: 'AP',   skillRollNormal: 'GSM',  cost:  90000 },
+  { race: 'Underworld',    name: 'Warpstone Troll',     maxCount:  1, ma: 4, st: 5, ag: 1, av:  9, skills: ['Always Hungry', 'Loner', 'Mighty Blow', 'Really Stupid', 'Regeneration', 'Throw Team-Mate'],                   skillRollDouble: 'GAP',  skillRollNormal: 'SM',   cost: 110000 },
+  // Vampire
+  { race: 'Vampire',       name: 'Thrall',              maxCount: 16, ma: 6, st: 3, ag: 3, av:  7, skills: ['None'],                                                                                                          skillRollDouble: 'ASP',  skillRollNormal: 'G',    cost:  40000 },
+  { race: 'Vampire',       name: 'Vampire',             maxCount:  6, ma: 6, st: 4, ag: 4, av:  8, skills: ['Blood Lust', 'Hypnotic Gaze', 'Regeneration'],                                                                  skillRollDouble: 'P',    skillRollNormal: 'GAS',  cost: 110000 },
+  // Wood Elf
+  { race: 'Wood Elf',      name: 'Lineman',             maxCount: 16, ma: 7, st: 3, ag: 4, av:  7, skills: ['None'],                                                                                                          skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  70000 },
+  { race: 'Wood Elf',      name: 'Thrower',             maxCount:  2, ma: 7, st: 3, ag: 4, av:  7, skills: ['Pass'],                                                                                                          skillRollDouble: 'S',    skillRollNormal: 'GAP',  cost:  90000 },
+  { race: 'Wood Elf',      name: 'Catcher',             maxCount:  4, ma: 8, st: 2, ag: 4, av:  7, skills: ['Catch', 'Dodge', 'Sprint'],                                                                                      skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost:  90000 },
+  { race: 'Wood Elf',      name: 'Wardancer',           maxCount:  2, ma: 8, st: 3, ag: 4, av:  7, skills: ['Block', 'Dodge', 'Leap'],                                                                                        skillRollDouble: 'SP',   skillRollNormal: 'GA',   cost: 120000 },
+  { race: 'Wood Elf',      name: 'Treeman',             maxCount:  1, ma: 2, st: 6, ag: 1, av: 10, skills: ['Loner', 'Mighty Blow', 'Stand Firm', 'Strong Arm', 'Take Root', 'Thick Skull', 'Throw Team-Mate'],              skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 120000 },
 ]
 
 const RACES = [
@@ -122,18 +275,33 @@ async function main() {
   await prisma.skill.createMany({ data: SKILLS, skipDuplicates: true })
   console.log(`Seeded ${SKILLS.length} skills.`)
 
+  const skillsInDb = await prisma.skill.findMany()
+  const skillByName: Record<string, { id: string }> = Object.fromEntries(skillsInDb.map((s) => [s.name, { id: s.id }]))
+  skillByName['Bone-head']       = skillByName['Bone Head']
+  skillByName['Claw']            = skillByName['Claws']
+  skillByName['Claw/Claws']      = skillByName['Claws']
+  skillByName['Nerves of Steel'] = skillByName['Nerves of Iron']
+
   await prisma.race.createMany({ data: RACES, skipDuplicates: true })
   const races = await prisma.race.findMany()
   const raceByName = Object.fromEntries(races.map((r) => [r.name, r]))
+  raceByName['Elf']       = raceByName['Elf / Pro Elf']
+  raceByName['Lizardman'] = raceByName['Lizardmen']
 
   const league = await prisma.league.create({
     data: { name: 'The Reikland Rumble League', season: 1 },
   })
 
+  await prisma.division.create({
+    data: { name: 'Premier Division', leagueId: league.id },
+  })
+
+  const defaultHash = await bcrypt.hash('password123', 10)
+
   const [grimtusk, skavenslick, aldric] = await Promise.all([
-    prisma.coach.create({ data: { name: 'Grimtusk Ironjaw',    email: 'grimtusk@greentide.bb' } }),
-    prisma.coach.create({ data: { name: 'Skavenslick Ratbane', email: 'slick@ratrunners.bb'   } }),
-    prisma.coach.create({ data: { name: 'Aldric the Bold',     email: 'aldric@reavers.bb'      } }),
+    prisma.coach.create({ data: { name: 'Grimtusk Ironjaw',    email: 'grimtusk@greentide.bb', passwordHash: defaultHash, role: 'ADMIN'  } }),
+    prisma.coach.create({ data: { name: 'Skavenslick Ratbane', email: 'slick@ratrunners.bb',   passwordHash: defaultHash, role: 'COMMISH' } }),
+    prisma.coach.create({ data: { name: 'Aldric the Bold',     email: 'aldric@reavers.bb',     passwordHash: defaultHash, role: 'COACH'  } }),
   ])
 
   const [greenTide, ratrunners, reavers] = await Promise.all([
@@ -185,6 +353,29 @@ async function main() {
       },
     ],
   })
+
+  await Promise.all(PLAYER_TYPES.map((pt) =>
+    prisma.playerType.create({
+      data: {
+        raceId:          raceByName[pt.race].id,
+        name:            pt.name,
+        cost:            pt.cost,
+        maxCount:        pt.maxCount,
+        ma:              pt.ma,
+        st:              pt.st,
+        ag:              pt.ag,
+        av:              pt.av,
+        skillRollDouble: pt.skillRollDouble,
+        skillRollNormal: pt.skillRollNormal,
+        startingSkills: {
+          connect: pt.skills
+            .filter((s) => s !== 'None')
+            .map((s) => ({ id: skillByName[s].id })),
+        },
+      },
+    })
+  ))
+  console.log(`Seeded ${PLAYER_TYPES.length} player types.`)
 
   console.log('Seed complete.')
 }

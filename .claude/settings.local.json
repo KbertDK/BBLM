@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Start-Process -FilePath \"cmd.exe\" -ArgumentList '/c', 'set \"PATH=C:\\\\Program Files\\\\nodejs;%APPDATA%\\\\npm;%PATH%\" && cd /d C:\\\\Users\\\\krbr\\\\VisualCode\\\\BBLM && npm run dev > dev.log 2>&1')",
+      "PowerShell(Get-Process -Name \"node\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force)"
+    ]
+  }
+}

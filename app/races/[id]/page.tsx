@@ -68,6 +68,17 @@ export default async function RaceDetailPage({ params }: Props) {
               </div>
             )}
           </div>
+          <div className="mt-5">
+            <Link
+              href={`/teams/new?raceId=${race.id}`}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold uppercase tracking-widest text-xs rounded-sm border border-bb-crimson-bright/50 transition-all shadow-lg shadow-bb-crimson/20"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Create team with this race
+            </Link>
+          </div>
         </div>
 
         {/* Player Types */}
@@ -84,7 +95,7 @@ export default async function RaceDetailPage({ params }: Props) {
             </div>
           ) : (
             <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-xl shadow-black/50">
-              <div className="grid grid-cols-12 text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-4 py-3 gap-2">
+              <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-4 py-3 gap-2">
                 <span className="col-span-3">Position</span>
                 <span className="col-span-1 text-center">Qty</span>
                 <span className="col-span-1 text-right">Cost</span>
@@ -92,10 +103,12 @@ export default async function RaceDetailPage({ params }: Props) {
                 <span className="col-span-1 text-center">ST</span>
                 <span className="col-span-1 text-center">AG</span>
                 <span className="col-span-1 text-center">AV</span>
-                <span className="col-span-4">Starting Skills</span>
+                <span className="col-span-1 text-center text-green-300/60">Normal</span>
+                <span className="col-span-1 text-center text-yellow-300/60">Double</span>
+                <span className="col-span-3">Starting Skills</span>
               </div>
               {race.playerTypes.map((pt, i) => (
-                <div key={pt.id} className={`grid grid-cols-12 items-start px-4 py-3.5 gap-2 border-b border-bb-border last:border-0 ${i % 2 !== 0 ? 'bg-white/[0.02]' : ''}`}>
+                <div key={pt.id} className={`grid grid-cols-[repeat(14,minmax(0,1fr))] items-start px-4 py-3.5 gap-2 border-b border-bb-border last:border-0 ${i % 2 !== 0 ? 'bg-white/[0.02]' : ''}`}>
                   <span className="col-span-3 font-semibold text-sm text-white">{pt.name}</span>
                   <span className="col-span-1 text-center text-sm text-bb-muted">0–{pt.maxCount}</span>
                   <span className="col-span-1 text-right text-sm text-bb-gold font-mono">{pt.cost.toLocaleString()}</span>
@@ -103,7 +116,9 @@ export default async function RaceDetailPage({ params }: Props) {
                   <span className="col-span-1 text-center font-bold text-sm text-white">{pt.st}</span>
                   <span className="col-span-1 text-center font-bold text-sm text-white">{pt.ag}</span>
                   <span className="col-span-1 text-center font-bold text-sm text-white">{pt.av}</span>
-                  <div className="col-span-4 flex flex-wrap gap-1">
+                  <span className="col-span-1 text-center font-mono text-xs text-green-300">{pt.skillRollNormal}</span>
+                  <span className="col-span-1 text-center font-mono text-xs text-yellow-300">{pt.skillRollDouble}</span>
+                  <div className="col-span-3 flex flex-wrap gap-1">
                     {pt.startingSkills.length === 0 ? (
                       <span className="text-bb-muted/40 text-xs italic">—</span>
                     ) : (

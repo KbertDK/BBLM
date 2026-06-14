@@ -1,4 +1,6 @@
 import Link from 'next/link'
+import { getSession } from '@/lib/auth'
+import { logoutAction } from '@/app/auth/login/actions'
 
 const navLinks = [
   { href: '/',           label: 'Home' },
@@ -8,7 +10,9 @@ const navLinks = [
   { href: '/standings',  label: 'Standings' },
 ]
 
-export default function Navbar() {
+export default async function Navbar() {
+  const session = await getSession()
+
   return (
     <header className="bg-bb-darker border-b border-bb-gold/30 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -35,14 +39,44 @@ export default function Navbar() {
                 {label}
               </Link>
             ))}
+            {(session?.role === 'ADMIN' || session?.role === 'COMMISH') && (
+              <Link
+                href="/league-management"
+                className="px-4 py-2 text-sm font-body text-bb-crimson-bright hover:text-white hover:bg-bb-crimson/20 rounded-sm transition-colors tracking-wide uppercase text-xs font-medium"
+              >
+                League Management
+              </Link>
+            )}
           </nav>
 
-          <Link
-            href="/auth/login"
-            className="hidden md:inline-flex items-center gap-2 px-4 py-2 text-xs font-medium uppercase tracking-widest text-bb-gold border border-bb-gold/40 rounded-sm hover:bg-bb-gold/10 hover:border-bb-gold transition-colors"
-          >
-            Coach Login
-          </Link>
+          <div className="hidden md:flex items-center gap-3">
+            {session ? (
+              <>
+                <Link
+                  href="/profile"
+                  className="text-xs text-bb-muted hover:text-bb-gold transition-colors"
+                >
+                  Signed in as{' '}
+                  <span className="text-bb-gold font-semibold">{session.alias ?? session.name}</span>
+                </Link>
+                <form action={logoutAction}>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 text-xs font-medium uppercase tracking-widest text-bb-muted border border-bb-border rounded-sm hover:text-white hover:border-bb-muted transition-colors"
+                  >
+                    Logout
+                  </button>
+                </form>
+              </>
+            ) : (
+              <Link
+                href="/auth/login"
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium uppercase tracking-widest text-bb-gold border border-bb-gold/40 rounded-sm hover:bg-bb-gold/10 hover:border-bb-gold transition-colors"
+              >
+                Coach Login
+              </Link>
+            )}
+          </div>
         </div>
       </div>
       <div className="h-px bg-gradient-to-r from-transparent via-bb-gold/50 to-transparent" />

@@ -29,18 +29,46 @@ export interface TeamListEntry extends TeamSummary {
   leagueName: string
 }
 
+export async function getTeamById(id: string) {
+  return prisma.team.findUnique({
+    where: { id },
+    include: {
+      race:     { select: { name: true, rerollPrice: true } },
+      coach:    { select: { name: true, alias: true } },
+      division: { select: { name: true } },
+      league: {
+        select: {
+          name: true,
+          ruleSet: { select: { numberOfPlayers: true } },
+        },
+      },
+      players: {
+        include: {
+          playerType: {
+            select: {
+              name: true, ma: true, st: true, ag: true, av: true,
+              startingSkills: { select: { name: true, category: true, skillRule: true } },
+            },
+          },
+        },
+        orderBy: { number: 'asc' },
+      },
+    },
+  })
+}
+
 export async function getLeagueTeams(): Promise<TeamListEntry[]> {
   const teams = await prisma.team.findMany({
     orderBy: [{ wins: 'desc' }, { draws: 'desc' }, { losses: 'asc' }],
     include: {
       race:   { select: { name: true } },
-      coach:  { select: { name: true } },
+      coach:  { select: { name: true, alias: true } },
       league: { select: { name: true } },
     },
   })
   return teams.map((t) => ({
     ...mapTeam(t),
-    coachName:  t.coach.name,
+    coachName:  t.coach.alias ?? t.coach.name,
     leagueName: t.league.name,
   }))
 }
