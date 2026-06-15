@@ -22,7 +22,7 @@ export default async function GameOnPage({ params }: PageProps) {
           race:    { select: { name: true } },
           players: {
             where:   { status: { in: ['ACTIVE', 'MNG'] } },
-            select:  { id: true, number: true, name: true, status: true, playerType: { select: { name: true } } },
+            select:  { id: true, number: true, name: true, status: true, ssp: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
             orderBy: { number: 'asc' },
           },
         },
@@ -35,7 +35,7 @@ export default async function GameOnPage({ params }: PageProps) {
           race:    { select: { name: true } },
           players: {
             where:   { status: { in: ['ACTIVE', 'MNG'] } },
-            select:  { id: true, number: true, name: true, status: true, playerType: { select: { name: true } } },
+            select:  { id: true, number: true, name: true, status: true, ssp: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
             orderBy: { number: 'asc' },
           },
         },
@@ -85,6 +85,12 @@ export default async function GameOnPage({ params }: PageProps) {
         name:           p.name,
         status:         p.status as 'ACTIVE' | 'MNG',
         playerTypeName: p.playerType.name,
+        ma:             p.playerType.ma,
+        st:             p.playerType.st,
+        ag:             p.playerType.ag,
+        av:             p.playerType.av,
+        ssp:            p.ssp,
+        skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
       })),
     },
     awayTeam: {
@@ -98,6 +104,12 @@ export default async function GameOnPage({ params }: PageProps) {
         name:           p.name,
         status:         p.status as 'ACTIVE' | 'MNG',
         playerTypeName: p.playerType.name,
+        ma:             p.playerType.ma,
+        st:             p.playerType.st,
+        ag:             p.playerType.ag,
+        av:             p.playerType.av,
+        ssp:            p.ssp,
+        skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
       })),
     },
   }

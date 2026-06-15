@@ -2,11 +2,17 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent } from './actions'
+import { getRaceLogo } from '@/lib/race-logo'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Phase          = 'prematch' | 'live' | 'postmatch'
 type CasualtyResult = 'KO' | 'BH' | 'MNG' | 'DEAD'
+
+export interface MatchSkill {
+  name: string
+  rule: string
+}
 
 export interface MatchPlayer {
   id:             string
@@ -14,6 +20,12 @@ export interface MatchPlayer {
   name:           string | null
   status:         'ACTIVE' | 'MNG'
   playerTypeName: string
+  ma:             number
+  st:             number
+  ag:             number
+  av:             number
+  ssp:            number
+  skills:         MatchSkill[]
 }
 
 export interface MatchTeamData {
@@ -35,6 +47,7 @@ export interface MatchData {
 interface MatchEvent {
   id:             string
   type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'HALFTIME'
+  turn?:          number        // which turn (1–16) the event occurred on
   // TD
   scoringTeam?:   'home' | 'away'
   scorerId?:      string
@@ -50,6 +63,7 @@ interface MatchEvent {
 
 interface GameState {
   phase:            Phase
+  turn:             number      // 1–16; 1–8 = 1st half, 9–16 = 2nd half
   lineup:           { home: string[]; away: string[] }
   events:           MatchEvent[]
   mvp:              { home: string | null; away: string | null }
@@ -59,8 +73,8 @@ interface GameState {
 
 type ModalState =
   | { type: 'td';          step: 1 | 2 | 3; team: 'home' | 'away' | null; scorerId: string | null; hasPass: boolean; passerId: string | null }
-  | { type: 'casualty';    step: 1 | 2 | 3; attackerId: string | null; victimId: string | null; result: CasualtyResult | null }
-  | { type: 'interception'; playerId: string | null }
+  | { type: 'casualty';    step: 1 | 2 | 3 | 4; attackTeam: 'home' | 'away' | null; attackerId: string | null; victimId: string | null; result: CasualtyResult | null }
+  | { type: 'interception'; step: 1 | 2; team: 'home' | 'away' | null; playerId: string | null }
   | null
 
 interface PlayerUpdate {
@@ -169,6 +183,150 @@ function computePlayerUpdates(
   return updates
 }
 
+// ─── SSP helpers ──────────────────────────────────────────────────────────────
+
+function getSspInfo(ssp: number): { levelName: string; toNext: number | null; nearPromotion: boolean } {
+  let levelName = 'Legend'
+  let nextThreshold: number | null = null
+  if      (ssp < 6)   { levelName = 'Rookie';        nextThreshold = 6   }
+  else if (ssp < 16)  { levelName = 'Experienced';   nextThreshold = 16  }
+  else if (ssp < 31)  { levelName = 'Veteran';        nextThreshold = 31  }
+  else if (ssp < 51)  { levelName = 'Emerging Star';  nextThreshold = 51  }
+  else if (ssp < 76)  { levelName = 'Star';           nextThreshold = 76  }
+  else if (ssp < 176) { levelName = 'Super Star';     nextThreshold = 176 }
+  const toNext = nextThreshold !== null ? nextThreshold - ssp : null
+  return { levelName, toNext, nearPromotion: toNext !== null && toNext <= 3 }
+}
+
+// ─── Roster Modal ─────────────────────────────────────────────────────────────
+
+function RosterModal({
+  team, players, logo, matchSspMap, onClose,
+}: {
+  team:        MatchTeamData
+  players:     MatchPlayer[]
+  logo:        string | null
+  matchSspMap: Map<string, number>
+  onClose:     () => void
+}) {
+  const [openSkill, setOpenSkill] = useState<string | null>(null)
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md bg-bb-dark border border-bb-gold/30 rounded-sm shadow-2xl max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-bb-border shrink-0">
+          {logo && <img src={logo} alt={team.raceName} className="w-10 h-10 object-contain opacity-90 shrink-0" />}
+          <div className="flex-1 min-w-0">
+            <h3 className="font-heading font-bold text-bb-gold text-lg leading-tight">{team.name}</h3>
+            <p className="text-xs text-bb-muted">{team.raceName} · {players.length} players</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="shrink-0 w-8 h-8 flex items-center justify-center text-bb-muted hover:text-white transition-colors rounded-sm"
+            aria-label="Close"
+          >✕</button>
+        </div>
+
+        {/* Player list */}
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          {players.length === 0 && (
+            <p className="text-bb-muted text-sm italic text-center py-4">No players in lineup.</p>
+          )}
+          {players.map((p) => (
+            <div key={p.id} className="pb-4 border-b border-bb-border/30 last:border-0">
+              {/* Name row */}
+              <div className="flex items-baseline gap-2 mb-1.5">
+                <span className="font-heading text-bb-muted text-xs w-7 shrink-0">#{p.number}</span>
+                <span className="text-white font-semibold text-sm">{p.name ?? p.playerTypeName}</span>
+                <span className="text-bb-muted/60 text-xs italic truncate">{p.playerTypeName}</span>
+                {p.status === 'MNG' && (
+                  <span className="ml-auto shrink-0 text-[10px] bg-amber-900/40 text-amber-400 border border-amber-700/40 px-1.5 py-0.5 rounded-sm font-heading">MNG</span>
+                )}
+              </div>
+
+              {/* Stats */}
+              <div className="flex gap-4 text-[11px] font-mono mb-1.5 ml-7">
+                {[['MA', p.ma], ['ST', p.st], ['AG', p.ag], ['AV', p.av]].map(([label, val]) => (
+                  <span key={label as string} className="text-bb-muted">
+                    <span className="text-bb-muted/50">{label} </span>{val}
+                  </span>
+                ))}
+              </div>
+
+              {/* SSP & Level */}
+              {(() => {
+                const matchSsp = matchSspMap.get(p.id) ?? 0
+                const totalSsp = p.ssp + matchSsp
+                const { levelName, toNext, nearPromotion } = getSspInfo(totalSsp)
+                return (
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 ml-7 mb-2">
+                    <span className="text-[11px] text-bb-muted/50 font-heading">SSP</span>
+                    <span className="text-[11px] font-mono text-bb-muted">{totalSsp}</span>
+                    {matchSsp > 0 && (
+                      <span className="text-[11px] text-bb-gold/70">(+{matchSsp} this match)</span>
+                    )}
+                    <span className={`text-[10px] font-heading uppercase tracking-wider px-1.5 py-0.5 rounded-sm border ${
+                      nearPromotion
+                        ? 'border-bb-gold text-bb-gold bg-bb-gold/10'
+                        : 'border-bb-border/40 text-bb-muted/50'
+                    }`}>{levelName}</span>
+                    {nearPromotion && toNext !== null && (
+                      <span className="text-[10px] text-bb-gold animate-pulse">↑ {toNext} to next level</span>
+                    )}
+                  </div>
+                )
+              })()}
+
+              {/* Skills — tap to expand rule */}
+              {p.skills.length > 0 && (
+                <div className="ml-7 space-y-1.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    {p.skills.map((skill) => {
+                      const key    = `${p.id}||${skill.name}`
+                      const isOpen = openSkill === key
+                      return (
+                        <button
+                          key={skill.name}
+                          onClick={() => setOpenSkill(isOpen ? null : key)}
+                          className={`text-[11px] px-2.5 py-1 rounded-sm border transition-colors touch-manipulation min-h-[32px] ${
+                            isOpen
+                              ? 'border-bb-gold text-bb-gold bg-bb-gold/10'
+                              : 'border-bb-border/60 text-bb-muted hover:border-bb-gold/40 hover:text-bb-gold/70 active:bg-bb-gold/5'
+                          }`}
+                        >
+                          {skill.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {/* Expanded rule */}
+                  {openSkill && openSkill.startsWith(`${p.id}||`) && (() => {
+                    const skillName = openSkill.split('||')[1]
+                    const skill     = p.skills.find((s) => s.name === skillName)
+                    return skill ? (
+                      <div className="text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2.5">
+                        <span className="text-bb-gold font-heading text-[10px] uppercase tracking-wider block mb-1">{skill.name}</span>
+                        {skill.rule}
+                      </div>
+                    ) : null
+                  })()}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -179,8 +337,12 @@ export default function GameOnClient({ matchData }: Props) {
   const [isPending, startTransition]   = useTransition()
   const [, persistTransition]          = useTransition()
 
+  const homeLogo = getRaceLogo(matchData.homeTeam.raceName)
+  const awayLogo = getRaceLogo(matchData.awayTeam.raceName)
+
   const defaultState = (): GameState => ({
     phase: matchData.status === 'LIVE' ? 'live' : 'prematch',
+    turn:  1,
     lineup: {
       home: matchData.homeTeam.players.filter((p) => p.status === 'ACTIVE').map((p) => p.id),
       away: matchData.awayTeam.players.filter((p) => p.status === 'ACTIVE').map((p) => p.id),
@@ -191,9 +353,10 @@ export default function GameOnClient({ matchData }: Props) {
     injuryOverrides: {},
   })
 
-  const [state, setState] = useState<GameState>(defaultState)
-  const [modal, setModal] = useState<ModalState>(null)
+  const [state, setState]       = useState<GameState>(defaultState)
+  const [modal, setModal]       = useState<ModalState>(null)
   const [hydrated, setHydrated] = useState(false)
+  const [rosterSide, setRosterSide] = useState<'home' | 'away' | null>(null)
 
   // Restore from localStorage after mount
   useEffect(() => {
@@ -230,7 +393,21 @@ export default function GameOnClient({ matchData }: Props) {
   )
 
   const score  = useMemo(() => computeScore(state.events), [state.events])
-  const half   = useMemo(() => state.events.some((e) => e.type === 'HALFTIME') ? 2 : 1, [state.events])
+  const half   = state.turn >= 9 ? 2 : 1
+
+  const matchSspMap = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of allPlayers) {
+      const tds  = state.events.filter((e) => e.type === 'TD' && e.scorerId === p.id).length
+      const comp = state.events.filter((e) => e.type === 'TD' && e.passerId === p.id).length
+      const ints = state.events.filter((e) => e.type === 'INTERCEPTION' && e.interceptorId === p.id).length
+      const cas  = state.events.filter((e) => e.type === 'CASUALTY' && e.attackerId === p.id && e.casualtyResult !== 'KO').length
+      const mvp  = (state.mvp.home === p.id || state.mvp.away === p.id) ? 5 : 0
+      const total = tds * 3 + comp + ints * 2 + cas * 2 + mvp
+      if (total > 0) map.set(p.id, total)
+    }
+    return map
+  }, [state.events, state.mvp, allPlayers])
 
   const homePlaying = useMemo(
     () => matchData.homeTeam.players.filter((p) => state.lineup.home.includes(p.id)),
@@ -289,13 +466,13 @@ export default function GameOnClient({ matchData }: Props) {
     if (modal?.type !== 'td') return
     const { team, scorerId, passerId, hasPass } = modal
     if (!team || !scorerId) return
-    const scorer  = playerById.get(scorerId)
-    const passer  = passerId && hasPass ? playerById.get(passerId) : null
+    const scorer   = playerById.get(scorerId)
+    const passer   = passerId && hasPass ? playerById.get(passerId) : null
     const teamName = team === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
-    const label   = passer
-      ? `TD · ${playerLabel(scorer!)} (${teamName}) — pass from ${playerLabel(passer)}`
-      : `TD · ${playerLabel(scorer!)} (${teamName})`
-    pushEvent({ id: uid(), type: 'TD', scoringTeam: team, scorerId, passerId: passer ? passerId! : undefined, label })
+    const label    = passer
+      ? `T${state.turn} · TD · ${playerLabel(scorer!)} (${teamName}) — pass from ${playerLabel(passer)}`
+      : `T${state.turn} · TD · ${playerLabel(scorer!)} (${teamName})`
+    pushEvent({ id: uid(), type: 'TD', turn: state.turn, scoringTeam: team, scorerId, passerId: passer ? passerId! : undefined, label })
     setModal(null)
   }
 
@@ -303,11 +480,11 @@ export default function GameOnClient({ matchData }: Props) {
     if (modal?.type !== 'casualty') return
     const { attackerId, victimId, result } = modal
     if (!attackerId || !victimId || !result) return
-    const attacker  = playerById.get(attackerId)!
-    const victim    = playerById.get(victimId)!
-    const atkTeam   = playerTeam.get(attackerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
-    const label     = `CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]`
-    pushEvent({ id: uid(), type: 'CASUALTY', attackerId, victimId, casualtyResult: result, label })
+    const attacker = playerById.get(attackerId)!
+    const victim   = playerById.get(victimId)!
+    const atkTeam  = playerTeam.get(attackerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    const label    = `T${state.turn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]`
+    pushEvent({ id: uid(), type: 'CASUALTY', turn: state.turn, attackerId, victimId, casualtyResult: result, label })
     setModal(null)
   }
 
@@ -315,9 +492,9 @@ export default function GameOnClient({ matchData }: Props) {
     if (modal?.type !== 'interception') return
     const { playerId } = modal
     if (!playerId) return
-    const p      = playerById.get(playerId)!
-    const team   = playerTeam.get(playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
-    pushEvent({ id: uid(), type: 'INTERCEPTION', interceptorId: playerId, label: `INT · ${playerLabel(p)} (${team})` })
+    const p    = playerById.get(playerId)!
+    const team = playerTeam.get(playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    pushEvent({ id: uid(), type: 'INTERCEPTION', turn: state.turn, interceptorId: playerId, label: `T${state.turn} · INT · ${playerLabel(p)} (${team})` })
     setModal(null)
   }
 
@@ -412,12 +589,21 @@ export default function GameOnClient({ matchData }: Props) {
         <div className="flex-1 grid grid-cols-2 divide-x divide-bb-border overflow-auto">
           {(['home', 'away'] as const).map((side) => {
             const team    = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+            const logo    = side === 'home' ? homeLogo : awayLogo
             const playing = state.lineup[side]
             return (
               <div key={side} className="p-6">
-                <div className="mb-5">
-                  <h2 className="font-heading text-xl font-bold text-bb-gold">{team.name}</h2>
-                  <p className="text-xs text-bb-muted">{team.raceName}</p>
+                <div className="mb-5 flex items-center gap-3">
+                  {logo && (
+                    <button onClick={() => setRosterSide(side)} title="View roster"
+                      className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
+                      <img src={logo} alt={team.raceName} className="w-12 h-12 object-contain opacity-90" />
+                    </button>
+                  )}
+                  <div>
+                    <h2 className="font-heading text-xl font-bold text-bb-gold">{team.name}</h2>
+                    <p className="text-xs text-bb-muted">{team.raceName}</p>
+                  </div>
                 </div>
                 <div className="space-y-1">
                   {team.players.length === 0 && (
@@ -456,6 +642,16 @@ export default function GameOnClient({ matchData }: Props) {
             ⚔ Kick Off!
           </button>
         </div>
+
+        {rosterSide && (
+          <RosterModal
+            team={rosterSide === 'home' ? matchData.homeTeam : matchData.awayTeam}
+            players={rosterSide === 'home' ? matchData.homeTeam.players : matchData.awayTeam.players}
+            logo={rosterSide === 'home' ? homeLogo : awayLogo}
+            matchSspMap={matchSspMap}
+            onClose={() => setRosterSide(null)}
+          />
+        )}
       </div>
     )
   }
@@ -470,21 +666,50 @@ export default function GameOnClient({ matchData }: Props) {
     return (
       <div className="min-h-screen bg-bb-darker text-white flex flex-col">
         {/* Sticky scoreboard header */}
-        <div className="sticky top-0 z-10 bg-bb-dark border-b border-bb-border px-4 sm:px-6 py-3 flex items-center gap-4">
+        <div className="sticky top-0 z-10 bg-bb-dark border-b border-bb-border px-4 sm:px-6 py-3 flex items-center gap-3">
+          {homeLogo && (
+            <button onClick={() => setRosterSide('home')} title="View home roster"
+              className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
+              <img src={homeLogo} alt={matchData.homeTeam.raceName} className="w-10 h-10 object-contain opacity-90" />
+            </button>
+          )}
           <div className="flex-1 text-center">
             <div className="text-xs text-bb-muted font-heading uppercase tracking-widest mb-0.5">{matchData.homeTeam.name}</div>
             <div className="font-heading text-4xl font-black text-bb-gold">{score.home}</div>
           </div>
           <div className="shrink-0 text-center">
-            <div className="text-bb-muted text-xs font-heading tracking-widest uppercase mb-0.5">
+            <div className="text-bb-muted text-[10px] font-heading tracking-widest uppercase mb-0.5">
               {half === 1 ? '1st Half' : '2nd Half'}
             </div>
             <div className="text-white font-heading text-lg font-bold">–</div>
+            <div className="flex items-center justify-center gap-1 mt-1">
+              <button
+                onClick={() => setState((prev) => ({ ...prev, turn: Math.max(1, prev.turn - 1) }))}
+                disabled={state.turn <= 1}
+                className="w-5 h-5 flex items-center justify-center text-bb-muted hover:text-white disabled:opacity-20 transition-colors text-xs leading-none"
+                aria-label="Previous turn"
+              >‹</button>
+              <span className="text-[11px] font-heading text-bb-muted/80 min-w-[36px] text-center">
+                T {state.turn}
+              </span>
+              <button
+                onClick={() => setState((prev) => ({ ...prev, turn: Math.min(16, prev.turn + 1) }))}
+                disabled={state.turn >= 16}
+                className="w-5 h-5 flex items-center justify-center text-bb-muted hover:text-white disabled:opacity-20 transition-colors text-xs leading-none"
+                aria-label="Next turn"
+              >›</button>
+            </div>
           </div>
           <div className="flex-1 text-center">
             <div className="text-xs text-bb-muted font-heading uppercase tracking-widest mb-0.5">{matchData.awayTeam.name}</div>
             <div className="font-heading text-4xl font-black text-bb-gold">{score.away}</div>
           </div>
+          {awayLogo && (
+            <button onClick={() => setRosterSide('away')} title="View away roster"
+              className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
+              <img src={awayLogo} alt={matchData.awayTeam.raceName} className="w-10 h-10 object-contain opacity-90" />
+            </button>
+          )}
         </div>
 
         {/* Main area */}
@@ -498,12 +723,12 @@ export default function GameOnClient({ matchData }: Props) {
               <span className="text-base">🏈</span> Touchdown
             </button>
 
-            <button onClick={() => setModal({ type: 'casualty', step: 1, attackerId: null, victimId: null, result: null })}
+            <button onClick={() => setModal({ type: 'casualty', step: 1, attackTeam: null, attackerId: null, victimId: null, result: null })}
               className={btnCrimson}>
               <span className="text-base">💀</span> Casualty
             </button>
 
-            <button onClick={() => setModal({ type: 'interception', playerId: null })}
+            <button onClick={() => setModal({ type: 'interception', step: 1, team: null, playerId: null })}
               className={btnGhost + ' text-left'}>
               <span className="text-base">🖐</span> Interception
             </button>
@@ -633,33 +858,33 @@ export default function GameOnClient({ matchData }: Props) {
           <ModalOverlay title="Record Casualty" onClose={() => setModal(null)}>
             {modal.step === 1 && (
               <>
+                <p className="text-bb-muted text-sm">Which team caused the casualty?</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['home', 'away'] as const).map((side) => {
+                    const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    return (
+                      <button key={side} onClick={() => setModal({ ...modal, step: 2, attackTeam: side })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-crimson hover:bg-bb-crimson/5 transition-colors text-center">
+                        <div className="font-heading font-bold text-white text-sm">{team.name}</div>
+                        <div className="text-xs text-bb-muted mt-1">{team.raceName}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+            {modal.step === 2 && modal.attackTeam && (
+              <>
                 <p className="text-bb-muted text-sm">Who caused the casualty?</p>
                 <SelectPlayer
-                  players={allPlaying}
+                  players={modal.attackTeam === 'home' ? homePlaying : awayPlaying}
                   value={modal.attackerId ?? ''}
                   onChange={(v) => setModal({ ...modal, attackerId: v })}
                   placeholder="Select attacker…"
                 />
-                <div className="flex justify-end pt-1">
-                  <button onClick={() => setModal({ ...modal, step: 2 })} disabled={!modal.attackerId}
-                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
-                    Next →
-                  </button>
-                </div>
-              </>
-            )}
-            {modal.step === 2 && (
-              <>
-                <p className="text-bb-muted text-sm">Who was injured?</p>
-                <SelectPlayer
-                  players={allPlaying.filter((p) => p.id !== modal.attackerId)}
-                  value={modal.victimId ?? ''}
-                  onChange={(v) => setModal({ ...modal, victimId: v })}
-                  placeholder="Select victim…"
-                />
                 <div className="flex justify-between pt-1">
                   <button onClick={() => setModal({ ...modal, step: 1 })} className={btnGhost}>← Back</button>
-                  <button onClick={() => setModal({ ...modal, step: 3 })} disabled={!modal.victimId}
+                  <button onClick={() => setModal({ ...modal, step: 3 })} disabled={!modal.attackerId}
                     className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
                     Next →
                   </button>
@@ -667,6 +892,38 @@ export default function GameOnClient({ matchData }: Props) {
               </>
             )}
             {modal.step === 3 && (
+              <>
+                <p className="text-bb-muted text-sm">Who was injured?</p>
+                {/* Grouped by team so home/away players are clearly separated */}
+                <select
+                  value={modal.victimId ?? ''}
+                  onChange={(e) => setModal({ ...modal, victimId: e.target.value })}
+                  className="w-full bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold"
+                >
+                  <option value="">Select victim…</option>
+                  {(['home', 'away'] as const).map((side) => {
+                    const team    = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    const players = (side === 'home' ? homePlaying : awayPlaying).filter((p) => p.id !== modal.attackerId)
+                    if (players.length === 0) return null
+                    return (
+                      <optgroup key={side} label={`── ${team.name} ──`}>
+                        {players.map((p) => (
+                          <option key={p.id} value={p.id}>{playerLabelFull(p)}</option>
+                        ))}
+                      </optgroup>
+                    )
+                  })}
+                </select>
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 2 })} className={btnGhost}>← Back</button>
+                  <button onClick={() => setModal({ ...modal, step: 4 })} disabled={!modal.victimId}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Next →
+                  </button>
+                </div>
+              </>
+            )}
+            {modal.step === 4 && (
               <>
                 <p className="text-bb-muted text-sm">Injury result:</p>
                 <div className="grid grid-cols-2 gap-2">
@@ -682,7 +939,7 @@ export default function GameOnClient({ matchData }: Props) {
                   ))}
                 </div>
                 <div className="flex justify-between pt-1">
-                  <button onClick={() => setModal({ ...modal, step: 2 })} className={btnGhost}>← Back</button>
+                  <button onClick={() => setModal({ ...modal, step: 3 })} className={btnGhost}>← Back</button>
                   <button onClick={commitCasualty} disabled={!modal.result}
                     className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
                     Confirm
@@ -696,19 +953,51 @@ export default function GameOnClient({ matchData }: Props) {
         {/* Interception Modal */}
         {modal?.type === 'interception' && (
           <ModalOverlay title="Record Interception" onClose={() => setModal(null)}>
-            <p className="text-bb-muted text-sm">Who made the interception?</p>
-            <SelectPlayer
-              players={allPlaying}
-              value={modal.playerId ?? ''}
-              onChange={(v) => setModal({ ...modal, playerId: v })}
-            />
-            <div className="flex justify-end pt-1">
-              <button onClick={commitInterception} disabled={!modal.playerId}
-                className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
-                Confirm
-              </button>
-            </div>
+            {modal.step === 1 && (
+              <>
+                <p className="text-bb-muted text-sm">Which team made the interception?</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['home', 'away'] as const).map((side) => {
+                    const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    return (
+                      <button key={side} onClick={() => setModal({ ...modal, step: 2, team: side })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors text-center">
+                        <div className="font-heading font-bold text-white text-sm">{team.name}</div>
+                        <div className="text-xs text-bb-muted mt-1">{team.raceName}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+            {modal.step === 2 && modal.team && (
+              <>
+                <p className="text-bb-muted text-sm">Who made the interception?</p>
+                <SelectPlayer
+                  players={modal.team === 'home' ? homePlaying : awayPlaying}
+                  value={modal.playerId ?? ''}
+                  onChange={(v) => setModal({ ...modal, playerId: v })}
+                />
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 1 })} className={btnGhost}>← Back</button>
+                  <button onClick={commitInterception} disabled={!modal.playerId}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Confirm
+                  </button>
+                </div>
+              </>
+            )}
           </ModalOverlay>
+        )}
+
+        {rosterSide && (
+          <RosterModal
+            team={rosterSide === 'home' ? matchData.homeTeam : matchData.awayTeam}
+            players={rosterSide === 'home' ? homePlaying : awayPlaying}
+            logo={rosterSide === 'home' ? homeLogo : awayLogo}
+            matchSspMap={matchSspMap}
+            onClose={() => setRosterSide(null)}
+          />
         )}
       </div>
     )
@@ -728,7 +1017,13 @@ export default function GameOnClient({ matchData }: Props) {
       {/* Header */}
       <div className="bg-bb-dark border-b border-bb-border px-6 py-5 text-center">
         <p className="text-xs text-bb-muted font-heading uppercase tracking-widest mb-2">Final Score · Round {matchData.round}</p>
-        <div className="flex items-center justify-center gap-6">
+        <div className="flex items-center justify-center gap-4 sm:gap-6">
+          {homeLogo && (
+            <button onClick={() => setRosterSide('home')} title="View home roster"
+              className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
+              <img src={homeLogo} alt={matchData.homeTeam.raceName} className="w-14 h-14 object-contain opacity-90" />
+            </button>
+          )}
           <div className="text-right">
             <p className="text-lg font-bold text-white">{matchData.homeTeam.name}</p>
             <p className="text-xs text-bb-muted">{matchData.homeTeam.raceName}</p>
@@ -740,6 +1035,12 @@ export default function GameOnClient({ matchData }: Props) {
             <p className="text-lg font-bold text-white">{matchData.awayTeam.name}</p>
             <p className="text-xs text-bb-muted">{matchData.awayTeam.raceName}</p>
           </div>
+          {awayLogo && (
+            <button onClick={() => setRosterSide('away')} title="View away roster"
+              className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
+              <img src={awayLogo} alt={matchData.awayTeam.raceName} className="w-14 h-14 object-contain opacity-90" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -892,6 +1193,16 @@ export default function GameOnClient({ matchData }: Props) {
           </button>
         </div>
       </div>
+
+      {rosterSide && (
+        <RosterModal
+          team={rosterSide === 'home' ? matchData.homeTeam : matchData.awayTeam}
+          players={rosterSide === 'home' ? homePlaying : awayPlaying}
+          logo={rosterSide === 'home' ? homeLogo : awayLogo}
+          matchSspMap={matchSspMap}
+          onClose={() => setRosterSide(null)}
+        />
+      )}
     </div>
   )
 }
