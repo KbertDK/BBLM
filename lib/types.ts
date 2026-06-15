@@ -2,8 +2,16 @@ export interface NewsPostSummary {
   id: string
   title: string
   excerpt: string
+  body: string
+  coachNote: string
   authorName: string
   createdAt: Date
+}
+
+export interface MatchEventSummary {
+  id:    string
+  type:  string
+  label: string
 }
 
 export interface MatchSummary {
@@ -11,9 +19,10 @@ export interface MatchSummary {
   round: number
   homeTeamName: string
   awayTeamName: string
-  scheduledAt: Date
+  scheduledAt: Date | null
   homeScore: number | null
   awayScore: number | null
+  recentEvents?: MatchEventSummary[]
 }
 
 export interface MatchResult extends MatchSummary {

@@ -36,6 +36,9 @@ model RuleSet {
   startIncome     Int
   numberOfPlayers Int           @default(16)
   gameType        GameType
+  pointsWin       Int           @default(3)
+  pointsDraw      Int           @default(1)
+  pointsLoss      Int           @default(0)
   status          RuleSetStatus @default(ACTIVE)
   leagues         League[]
   createdAt       DateTime      @default(now())
@@ -138,6 +141,7 @@ model Team {
   coach       Coach     @relation(fields: [coachId], references: [id])
   league      League    @relation(fields: [leagueId], references: [id])
   division    Division? @relation(fields: [divisionId], references: [id], onDelete: SetNull)
+  isActive    Boolean   @default(true)
   homeMatches Match[]   @relation("HomeTeam")
   awayMatches Match[]   @relation("AwayTeam")
   wins             Int          @default(0)
@@ -156,6 +160,7 @@ model Team {
 enum PlayerStatus {
   ACTIVE
   MNG
+  SACKED
   DEAD
 }
 
@@ -174,25 +179,36 @@ model TeamPlayer {
   casualties     Int          @default(0)
   mvp            Int          @default(0)
   ssp            Int          @default(0)
-  niggling       String       @default("")
-  value          Int          @default(0)
-  createdAt      DateTime     @default(now())
+  niggling        String       @default("")
+  value           Int          @default(0)
+  teamGamesAtSack Int?
+  createdAt       DateTime     @default(now())
 }
 
 model Match {
-  id          String      @id @default(cuid())
+  id          String       @id @default(cuid())
   leagueId    String
-  league      League      @relation(fields: [leagueId], references: [id])
+  league      League       @relation(fields: [leagueId], references: [id])
   homeTeamId  String
   awayTeamId  String
-  homeTeam    Team        @relation("HomeTeam", fields: [homeTeamId], references: [id])
-  awayTeam    Team        @relation("AwayTeam", fields: [awayTeamId], references: [id])
-  scheduledAt DateTime
-  status      MatchStatus @default(SCHEDULED)
+  homeTeam    Team         @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam    Team         @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  scheduledAt DateTime?
+  status      MatchStatus  @default(SCHEDULED)
   round       Int
   homeScore   Int?
   awayScore   Int?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime     @default(now())
+  events      MatchEvent[]
+}
+
+model MatchEvent {
+  id        String   @id @default(cuid())
+  matchId   String
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  type      String
+  label     String
+  createdAt DateTime @default(now())
 }
 
 enum MatchStatus {
@@ -207,6 +223,9 @@ model NewsPost {
   body      String
   authorId  String
   author    Coach    @relation(fields: [authorId], references: [id])
+  teamId    String?
+  playerId  String?
+  coachNote String   @default("")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

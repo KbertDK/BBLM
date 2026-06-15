@@ -12,8 +12,13 @@ export async function createRuleSet(formData: FormData) {
   const startIncome     = parseInt(formData.get('startIncome')     as string, 10)
   const numberOfPlayers = parseInt(formData.get('numberOfPlayers') as string, 10) || 16
   const gameType        =  formData.get('gameType') as string
+  const pointsWin       = parseInt(formData.get('pointsWin')  as string, 10)
+  const pointsDraw      = parseInt(formData.get('pointsDraw') as string, 10)
+  const pointsLoss      = parseInt(formData.get('pointsLoss') as string, 10)
   if (!name || isNaN(startIncome) || !VALID_GAME_TYPES.includes(gameType)) return
-  await prisma.ruleSet.create({ data: { name, startIncome, numberOfPlayers, gameType: gameType as GameType } })
+  if (isNaN(pointsWin) || isNaN(pointsDraw) || isNaN(pointsLoss)) return
+  if (pointsWin < 0 || pointsDraw < 0 || pointsLoss < 0) return
+  await prisma.ruleSet.create({ data: { name, startIncome, numberOfPlayers, gameType: gameType as GameType, pointsWin, pointsDraw, pointsLoss } })
   revalidatePath(REVALIDATE)
 }
 
@@ -23,8 +28,13 @@ export async function updateRuleSet(formData: FormData) {
   const startIncome     = parseInt(formData.get('startIncome')     as string, 10)
   const numberOfPlayers = parseInt(formData.get('numberOfPlayers') as string, 10) || 16
   const gameType        =  formData.get('gameType') as string
+  const pointsWin       = parseInt(formData.get('pointsWin')  as string, 10)
+  const pointsDraw      = parseInt(formData.get('pointsDraw') as string, 10)
+  const pointsLoss      = parseInt(formData.get('pointsLoss') as string, 10)
   if (!name || isNaN(startIncome) || !VALID_GAME_TYPES.includes(gameType)) return
-  await prisma.ruleSet.update({ where: { id }, data: { name, startIncome, numberOfPlayers, gameType: gameType as GameType } })
+  if (isNaN(pointsWin) || isNaN(pointsDraw) || isNaN(pointsLoss)) return
+  if (pointsWin < 0 || pointsDraw < 0 || pointsLoss < 0) return
+  await prisma.ruleSet.update({ where: { id }, data: { name, startIncome, numberOfPlayers, gameType: gameType as GameType, pointsWin, pointsDraw, pointsLoss } })
   revalidatePath(REVALIDATE)
 }
 

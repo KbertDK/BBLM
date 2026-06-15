@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { format } from 'date-fns'
 import { MatchSummary } from '@/lib/types'
 
@@ -21,13 +22,22 @@ export default function UpcomingMatches({ matches }: Props) {
                 Round {m.round}
               </span>
               <span className="text-xs text-bb-muted">
-                {format(new Date(m.scheduledAt), 'EEE d MMM · HH:mm')}
+                {m.scheduledAt ? format(new Date(m.scheduledAt), 'EEE d MMM · HH:mm') : 'TBD'}
               </span>
             </div>
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="text-white font-medium truncate">{m.homeTeamName}</span>
               <span className="text-bb-muted shrink-0 text-xs">vs</span>
               <span className="text-white font-medium truncate text-right">{m.awayTeamName}</span>
+            </div>
+            <div className="mt-2 flex justify-end">
+              <Link
+                href={`/matches/${m.id}/game`}
+                target="_blank"
+                className="inline-flex items-center gap-1.5 text-[11px] font-heading uppercase tracking-widest px-3 py-1 border border-bb-crimson/50 text-bb-crimson hover:bg-bb-crimson hover:text-white rounded-sm transition-colors"
+              >
+                ⚔ Game On
+              </Link>
             </div>
           </div>
         ))

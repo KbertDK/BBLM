@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { format } from 'date-fns'
 import { MatchResult } from '@/lib/types'
 import clsx from 'clsx'
@@ -20,9 +21,15 @@ export default function LatestResults({ results }: Props) {
           const awayWon = m.winnerId === m.awayTeamId
 
           return (
-            <div key={m.id} className="bg-bb-darker rounded-sm p-3 border border-bb-border hover:border-bb-gold/30 transition-colors">
-              <div className="text-xs text-bb-muted mb-2">
-                Round {m.round} · {format(new Date(m.scheduledAt), 'd MMM')}
+            <Link key={m.id} href={`/matches/${m.id}`}
+              className="block bg-bb-darker rounded-sm p-3 border border-bb-border hover:border-bb-gold/30 transition-colors group">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-bb-muted">
+                  Round {m.round}{m.scheduledAt ? ` · ${format(new Date(m.scheduledAt), 'd MMM')}` : ''}
+                </span>
+                <span className="text-[10px] text-bb-gold/40 group-hover:text-bb-gold/70 font-heading uppercase tracking-widest transition-colors">
+                  Report →
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className={clsx('flex-1 text-sm font-medium truncate', homeWon ? 'text-bb-gold' : 'text-bb-muted')}>
@@ -42,7 +49,7 @@ export default function LatestResults({ results }: Props) {
               ) : (
                 <div className="text-xs text-bb-muted mt-1 text-center">Draw</div>
               )}
-            </div>
+            </Link>
           )
         })
       )}

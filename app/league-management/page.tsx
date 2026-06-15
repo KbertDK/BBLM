@@ -1,5 +1,7 @@
+import Link from 'next/link'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
+import { getMatchesByLeague } from '@/lib/queries/matches'
 import {
   createLeague, renameLeague, toggleLeagueVisibility, deleteLeague, setLeagueStatus,
   createDivision, renameDivision, toggleDivisionVisibility, deleteDivision,
@@ -12,6 +14,7 @@ import {
   createCoach, renameCoach, updateCoachEmail, resetCoachPassword,
   toggleCoachActive, deleteCoach,
 } from './coach-actions'
+import MatchesTab from './MatchesTab'
 
 export const dynamic = 'force-dynamic'
 
@@ -93,9 +96,16 @@ function btnCls(variant: 'primary' | 'ghost' | 'danger' | 'muted' = 'ghost', ext
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default async function LeagueManagementPage() {
+interface Props {
+  searchParams: Promise<{ tab?: string; leagueId?: string; divisionId?: string }>
+}
+
+export default async function LeagueManagementPage({ searchParams }: Props) {
   const session = await getSession()
   const isAdmin = session?.role === 'ADMIN'
+
+  const { tab: rawTab, leagueId: selectedLeagueId, divisionId: selectedDivisionId } = await searchParams
+  const tab = rawTab ?? 'leagues'
 
   const [ruleSets, leagues, divisions, teams] = await Promise.all([
     prisma.ruleSet.findMany({
@@ -127,269 +137,283 @@ export default async function LeagueManagementPage() {
     ? await prisma.coach.findMany({ orderBy: { name: 'asc' }, include: { _count: { select: { teams: true } } } })
     : []
 
-  const activeLeagues  = leagues.filter((l) => l.status !== 'ENDED')
+  // Matches tab — only fetch when needed
+  let leagueMatches: Awaited<ReturnType<typeof getMatchesByLeague>> = []
+  let leagueTeams: { id: string; name: string; divisionId: string | null; division: { id: string; name: string } | null }[] = []
+
+  if (tab === 'matches' && selectedLeagueId) {
+    ;[leagueMatches, leagueTeams] = await Promise.all([
+      getMatchesByLeague(selectedLeagueId),
+      prisma.team.findMany({
+        where:   { leagueId: selectedLeagueId },
+        select:  { id: true, name: true, divisionId: true, division: { select: { id: true, name: true } } },
+        orderBy: { name: 'asc' },
+      }),
+    ])
+  }
+
+  const openLeagues    = leagues.filter((l) => l.status !== 'ENDED')        // for Divisions create form
+  const matchLeagues   = leagues.filter((l) => l.status === 'ACTIVE' || l.status === 'READY')  // for Matches tab
   const activeRuleSets = ruleSets.filter((r) => r.status === 'ACTIVE')
+
+  // Derived for matches tab
+  const leagueDivisions = Array.from(
+    new Map(
+      leagueTeams.filter((t) => t.division).map((t) => [t.division!.id, t.division!])
+    ).values()
+  )
+
+  // Serialize matches for the client component (Date → ISO string)
+  const serializedMatches = leagueMatches.map((m) => ({
+    id:                   m.id,
+    round:                m.round,
+    homeTeamId:           m.homeTeam.id,
+    homeTeamName:         m.homeTeam.name,
+    homeTeamDivisionId:   m.homeTeam.divisionId,
+    awayTeamId:           m.awayTeam.id,
+    awayTeamName:         m.awayTeam.name,
+    awayTeamDivisionId:   m.awayTeam.divisionId,
+    scheduledAt:          m.scheduledAt?.toISOString() ?? null,
+    status:               m.status,
+    homeScore:            m.homeScore,
+    awayScore:            m.awayScore,
+  }))
+
+  const tabItems = [
+    { value: 'leagues', label: 'Leagues & Divisions' },
+    { value: 'matches', label: 'Matches & Schedule' },
+    ...(isAdmin ? [{ value: 'users', label: 'Users' }] : []),
+  ]
 
   return (
     <div className="min-h-screen bg-bb-navy">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-14 space-y-14">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-14 space-y-10">
 
+        {/* Page header + tab navigation */}
         <div>
           <h1 className="font-heading text-3xl font-black text-bb-gold tracking-widest uppercase mb-1">
             League Management
           </h1>
-          <p className="text-bb-muted text-sm">Manage rule sets, leagues, divisions, and team assignments.</p>
+          <p className="text-bb-muted text-sm mb-6">Manage rule sets, leagues, divisions, matches and team assignments.</p>
+
+          <nav className="flex flex-wrap gap-1.5">
+            {tabItems.map(({ value, label }) => (
+              <Link
+                key={value}
+                href={`/league-management?tab=${value}`}
+                className={`text-xs font-medium uppercase tracking-widest px-4 py-2 rounded-sm border transition-colors ${
+                  tab === value
+                    ? 'border-bb-gold text-bb-gold bg-bb-gold/5'
+                    : 'border-bb-border text-bb-muted hover:text-white hover:border-bb-muted'
+                }`}
+              >
+                {label}
+              </Link>
+            ))}
+          </nav>
         </div>
 
-        {/* ── Rule Sets ── */}
-        <section>
-          <SectionHeading title="Rule Sets" />
+        {/* ── Tab 1: Leagues & Divisions ── */}
+        {tab === 'leagues' && (
+          <>
+            {/* Rule Sets */}
+            <section>
+              <SectionHeading title="Rule Sets" />
 
-          {/* Create rule set */}
-          <form action={createRuleSet} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto_auto] gap-2 mb-6">
-            <input name="name" required placeholder="Rule set name" className={inputCls()} />
-            <input name="startIncome" type="number" required min={0} step={1000} defaultValue={1000000} placeholder="Start income" className={inputCls('w-36')} />
-            <input name="numberOfPlayers" type="number" required min={1} max={99} defaultValue={16} placeholder="Max players" className={inputCls('w-28')} />
-            <select name="gameType" required className={inputCls('w-44')}>
-              <option value="BLOOD_BOWL">Blood Bowl</option>
-              <option value="DUNGEON_BOWL">Dungeon Bowl</option>
-              <option value="BB7">BB7</option>
-            </select>
-            <button type="submit" className={btnCls('primary')}>Create</button>
-          </form>
+              <form action={createRuleSet} className="space-y-2 mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2">
+                  <input name="name" required placeholder="Rule set name" className={inputCls()} />
+                  <input name="startIncome" type="number" required min={0} step={1000} defaultValue={1000000} placeholder="Start income" className={inputCls('w-36')} />
+                  <input name="numberOfPlayers" type="number" required min={1} max={99} defaultValue={16} placeholder="Max players" className={inputCls('w-28')} />
+                  <select name="gameType" required className={inputCls('w-44')}>
+                    <option value="BLOOD_BOWL">Blood Bowl</option>
+                    <option value="DUNGEON_BOWL">Dungeon Bowl</option>
+                    <option value="BB7">BB7</option>
+                  </select>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-xs font-heading tracking-widest uppercase text-bb-muted/60">Points per result</span>
+                  <label className="flex items-center gap-1.5">
+                    <span className="text-xs text-bb-muted">Win</span>
+                    <input name="pointsWin" type="number" required min={0} defaultValue={3} className={inputCls('w-16 text-center')} />
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <span className="text-xs text-bb-muted">Draw</span>
+                    <input name="pointsDraw" type="number" required min={0} defaultValue={1} className={inputCls('w-16 text-center')} />
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <span className="text-xs text-bb-muted">Loss</span>
+                    <input name="pointsLoss" type="number" required min={0} defaultValue={0} className={inputCls('w-16 text-center')} />
+                  </label>
+                  <button type="submit" className={btnCls('primary', 'ml-auto')}>Create</button>
+                </div>
+              </form>
 
-          {/* Rule set list */}
-          <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
-            {ruleSets.length === 0 && (
-              <p className="text-bb-muted/50 text-sm italic px-4 py-3">No rule sets yet.</p>
-            )}
-            {ruleSets.map((rs) => {
-              const leagueCount = rs._count.leagues
-              return (
-                <details key={rs.id} className="group bg-bb-dark">
-                  {/* Compact row */}
-                  <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
-                    <Chevron cls="text-bb-muted/60" />
-                    <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{rs.name}</span>
-                    <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                      <Badge label={GAME_TYPE_LABELS[rs.gameType]} cls={GAME_TYPE_BADGE_CLS[rs.gameType]} />
-                      <span className="text-bb-muted text-xs whitespace-nowrap">
-                        {rs.startIncome.toLocaleString()} gp · {rs.numberOfPlayers}p
-                      </span>
-                      {rs.status === 'ACTIVE' ? (
-                        <Badge label="Active"   cls="border-green-700/50 text-green-400 bg-green-900/10" />
-                      ) : (
-                        <Badge label="Inactive" cls="border-bb-muted/30 text-bb-muted/50 bg-bb-muted/5" />
-                      )}
-                    </div>
-                  </summary>
+              <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
+                {ruleSets.length === 0 && (
+                  <p className="text-bb-muted/50 text-sm italic px-4 py-3">No rule sets yet.</p>
+                )}
+                {ruleSets.map((rs) => {
+                  const leagueCount = rs._count.leagues
+                  return (
+                    <details key={rs.id} className="group bg-bb-dark">
+                      <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                        <Chevron cls="text-bb-muted/60" />
+                        <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{rs.name}</span>
+                        <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                          <Badge label={GAME_TYPE_LABELS[rs.gameType]} cls={GAME_TYPE_BADGE_CLS[rs.gameType]} />
+                          <span className="text-bb-muted text-xs whitespace-nowrap">
+                            {rs.startIncome.toLocaleString()} gp · {rs.numberOfPlayers}p · W{rs.pointsWin}/D{rs.pointsDraw}/L{rs.pointsLoss}
+                          </span>
+                          {rs.status === 'ACTIVE' ? (
+                            <Badge label="Active"   cls="border-green-700/50 text-green-400 bg-green-900/10" />
+                          ) : (
+                            <Badge label="Inactive" cls="border-bb-muted/30 text-bb-muted/50 bg-bb-muted/5" />
+                          )}
+                        </div>
+                      </summary>
 
-                  {/* Edit panel */}
-                  <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-2 bg-bb-darker/30">
-                    <form action={updateRuleSet} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto_auto] gap-1.5">
-                      <input type="hidden" name="id" value={rs.id} />
-                      <input name="name" defaultValue={rs.name} required className={inputCls()} />
-                      <input name="startIncome" type="number" required min={0} step={1000} defaultValue={rs.startIncome} className={inputCls('w-36')} />
-                      <input name="numberOfPlayers" type="number" required min={1} max={99} defaultValue={rs.numberOfPlayers} className={inputCls('w-28')} />
-                      <select name="gameType" defaultValue={rs.gameType} className={inputCls('w-44')}>
-                        <option value="BLOOD_BOWL">Blood Bowl</option>
-                        <option value="DUNGEON_BOWL">Dungeon Bowl</option>
-                        <option value="BB7">BB7</option>
-                      </select>
-                      <button type="submit" className={btnCls('ghost')}>Save</button>
-                    </form>
+                      <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-2 bg-bb-darker/30">
+                        <form action={updateRuleSet} className="space-y-1.5">
+                          <input type="hidden" name="id" value={rs.id} />
+                          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-1.5">
+                            <input name="name" defaultValue={rs.name} required className={inputCls()} />
+                            <input name="startIncome" type="number" required min={0} step={1000} defaultValue={rs.startIncome} className={inputCls('w-36')} />
+                            <input name="numberOfPlayers" type="number" required min={1} max={99} defaultValue={rs.numberOfPlayers} className={inputCls('w-28')} />
+                            <select name="gameType" defaultValue={rs.gameType} className={inputCls('w-44')}>
+                              <option value="BLOOD_BOWL">Blood Bowl</option>
+                              <option value="DUNGEON_BOWL">Dungeon Bowl</option>
+                              <option value="BB7">BB7</option>
+                            </select>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className="text-xs font-heading tracking-widest uppercase text-bb-muted/60">Points per result</span>
+                            <label className="flex items-center gap-1.5">
+                              <span className="text-xs text-bb-muted">Win</span>
+                              <input name="pointsWin" type="number" required min={0} defaultValue={rs.pointsWin} className={inputCls('w-16 text-center')} />
+                            </label>
+                            <label className="flex items-center gap-1.5">
+                              <span className="text-xs text-bb-muted">Draw</span>
+                              <input name="pointsDraw" type="number" required min={0} defaultValue={rs.pointsDraw} className={inputCls('w-16 text-center')} />
+                            </label>
+                            <label className="flex items-center gap-1.5">
+                              <span className="text-xs text-bb-muted">Loss</span>
+                              <input name="pointsLoss" type="number" required min={0} defaultValue={rs.pointsLoss} className={inputCls('w-16 text-center')} />
+                            </label>
+                            <button type="submit" className={btnCls('ghost', 'ml-auto')}>Save</button>
+                          </div>
+                        </form>
 
-                    <div className="flex gap-2 pt-1 border-t border-bb-border/30">
-                      <form action={toggleRuleSetStatus}>
-                        <input type="hidden" name="id" value={rs.id} />
-                        <button type="submit" className={btnCls('ghost')}>
-                          {rs.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </form>
-                      <form action={deleteRuleSet}>
-                        <input type="hidden" name="id" value={rs.id} />
-                        <button
-                          type="submit"
-                          disabled={leagueCount > 0}
-                          title={leagueCount > 0 ? `Used by ${leagueCount} league(s) — reassign first` : 'Delete rule set'}
-                          className={btnCls(leagueCount > 0 ? 'muted' : 'danger')}
-                        >
-                          Delete
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-                </details>
-              )
-            })}
-          </div>
-        </section>
+                        <div className="flex gap-2 pt-1 border-t border-bb-border/30">
+                          <form action={toggleRuleSetStatus}>
+                            <input type="hidden" name="id" value={rs.id} />
+                            <button type="submit" className={btnCls('ghost')}>
+                              {rs.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                            </button>
+                          </form>
+                          <form action={deleteRuleSet}>
+                            <input type="hidden" name="id" value={rs.id} />
+                            <button
+                              type="submit"
+                              disabled={leagueCount > 0}
+                              title={leagueCount > 0 ? `Used by ${leagueCount} league(s) — reassign first` : 'Delete rule set'}
+                              className={btnCls(leagueCount > 0 ? 'muted' : 'danger')}
+                            >
+                              Delete
+                            </button>
+                          </form>
+                        </div>
+                      </div>
+                    </details>
+                  )
+                })}
+              </div>
+            </section>
 
-        {/* ── Leagues ── */}
-        <section>
-          <SectionHeading title="Leagues" />
+            {/* Leagues */}
+            <section>
+              <SectionHeading title="Leagues" />
 
-          {/* Create league */}
-          <details className="group mb-6 bg-bb-dark border border-bb-border rounded-sm">
-            <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
-              <Chevron cls="text-bb-muted" />
-              <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Create new league</span>
-            </summary>
-            <form action={createLeague} className="px-4 pb-4 pt-3 border-t border-bb-border/40 flex gap-2">
-              <input name="name" required placeholder="League name" className={inputCls('flex-1')} />
-              <input name="season" type="number" required min={1} defaultValue={1} placeholder="Season" className={inputCls('w-24')} />
-              <button type="submit" className={btnCls('primary')}>Create</button>
-            </form>
-          </details>
+              <details className="group mb-6 bg-bb-dark border border-bb-border rounded-sm">
+                <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                  <Chevron cls="text-bb-muted" />
+                  <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Create new league</span>
+                </summary>
+                <form action={createLeague} className="px-4 pb-4 pt-3 border-t border-bb-border/40 flex gap-2">
+                  <input name="name" required placeholder="League name" className={inputCls('flex-1')} />
+                  <input name="season" type="number" required min={1} defaultValue={1} placeholder="Season" className={inputCls('w-24')} />
+                  <button type="submit" className={btnCls('primary')}>Create</button>
+                </form>
+              </details>
 
-          {/* League list */}
-          <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
-            {leagues.length === 0 && (
-              <p className="text-bb-muted/50 text-sm italic px-4 py-3">No leagues yet.</p>
-            )}
-            {leagues.map((league) => {
-              const hasTeams = league._count.teams > 0
-              return (
-                <details key={league.id} className="group bg-bb-dark">
-                  <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
-                    <Chevron cls="text-bb-muted/60" />
-                    <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{league.name}</span>
-                    <span className="text-bb-muted/50 text-xs hidden sm:block">S{league.season}</span>
-                    <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                      <Badge label={STATUS_LABELS[league.status]} cls={STATUS_BADGE_CLS[league.status]} />
-                      {league.ruleSet && (
-                        <Badge
-                          label={`${league.ruleSet.name} · ${GAME_TYPE_LABELS[league.ruleSet.gameType]}`}
-                          cls={GAME_TYPE_BADGE_CLS[league.ruleSet.gameType]}
-                        />
-                      )}
-                      <span className="text-bb-muted/40 text-xs whitespace-nowrap">
-                        {league._count.teams} team{league._count.teams !== 1 ? 's' : ''}
-                      </span>
-                      {league.isHidden && <HiddenBadge />}
-                    </div>
-                  </summary>
+              <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
+                {leagues.length === 0 && (
+                  <p className="text-bb-muted/50 text-sm italic px-4 py-3">No leagues yet.</p>
+                )}
+                {leagues.map((league) => {
+                  const hasTeams = league._count.teams > 0
+                  return (
+                    <details key={league.id} className="group bg-bb-dark">
+                      <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                        <Chevron cls="text-bb-muted/60" />
+                        <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{league.name}</span>
+                        <span className="text-bb-muted/50 text-xs hidden sm:block">S{league.season}</span>
+                        <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                          <Badge label={STATUS_LABELS[league.status]} cls={STATUS_BADGE_CLS[league.status]} />
+                          {league.ruleSet && (
+                            <Badge
+                              label={`${league.ruleSet.name} · ${GAME_TYPE_LABELS[league.ruleSet.gameType]}`}
+                              cls={GAME_TYPE_BADGE_CLS[league.ruleSet.gameType]}
+                            />
+                          )}
+                          <span className="text-bb-muted/40 text-xs whitespace-nowrap">
+                            {league._count.teams} team{league._count.teams !== 1 ? 's' : ''}
+                          </span>
+                          {league.isHidden && <HiddenBadge />}
+                        </div>
+                      </summary>
 
-                  <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-2 bg-bb-darker/30">
-                    <form action={renameLeague} className="flex gap-1.5">
-                      <input type="hidden" name="id" value={league.id} />
-                      <input name="name" defaultValue={league.name} required className={inputCls('flex-1')} />
-                      <button type="submit" className={btnCls('ghost')}>Rename</button>
-                    </form>
-                    <form action={setLeagueStatus} className="flex gap-2 items-center">
-                      <input type="hidden" name="id" value={league.id} />
-                      <select name="status" defaultValue={league.status} className={inputCls('flex-1 text-xs')}>
-                        <option value="READY">Ready for first gameday</option>
-                        <option value="ACTIVE">Season started</option>
-                        <option value="ENDED">Season ended</option>
-                      </select>
-                      <button type="submit" className={btnCls('ghost')}>Set Status</button>
-                    </form>
-                    <form action={setLeagueRuleSet} className="flex gap-2 items-center">
-                      <input type="hidden" name="id" value={league.id} />
-                      <select name="ruleSetId" defaultValue={league.ruleSetId ?? ''} className={inputCls('flex-1 text-xs')}>
-                        <option value="">— No rule set —</option>
-                        {activeRuleSets.map((rs) => (
-                          <option key={rs.id} value={rs.id}>{rs.name} · {GAME_TYPE_LABELS[rs.gameType]}</option>
-                        ))}
-                        {league.ruleSet && !activeRuleSets.find((r) => r.id === league.ruleSet!.id) && (
-                          <option value={league.ruleSet.id}>
-                            {league.ruleSet.name} · {GAME_TYPE_LABELS[league.ruleSet.gameType]} (inactive)
-                          </option>
-                        )}
-                      </select>
-                      <button type="submit" className={btnCls('ghost')}>Set Rule Set</button>
-                    </form>
-                    <div className="flex gap-2 pt-1 border-t border-bb-border/30">
-                      <form action={toggleLeagueVisibility}>
-                        <input type="hidden" name="id" value={league.id} />
-                        <button type="submit" className={btnCls('ghost')}>{league.isHidden ? 'Show' : 'Hide'}</button>
-                      </form>
-                      <form action={deleteLeague}>
-                        <input type="hidden" name="id" value={league.id} />
-                        <button
-                          type="submit"
-                          disabled={hasTeams}
-                          title={hasTeams ? 'Move or remove all teams first' : 'Delete league'}
-                          className={btnCls(hasTeams ? 'muted' : 'danger')}
-                        >
-                          Delete
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-                </details>
-              )
-            })}
-          </div>
-        </section>
-
-        {/* ── Divisions ── */}
-        <section>
-          <SectionHeading title="Divisions" />
-
-          {/* Create division */}
-          <details className="group mb-6 bg-bb-dark border border-bb-border rounded-sm">
-            <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
-              <Chevron cls="text-bb-muted" />
-              <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Create new division</span>
-            </summary>
-            <form action={createDivision} className="px-4 pb-4 pt-3 border-t border-bb-border/40 flex gap-2">
-              <input name="name" required placeholder="Division name" className={inputCls('flex-1')} />
-              <select name="leagueId" required className={inputCls('w-48')}>
-                <option value="">— Select league —</option>
-                {activeLeagues.map((l) => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
-                ))}
-              </select>
-              <button type="submit" className={btnCls('primary')}>Create</button>
-            </form>
-          </details>
-
-          {/* Division list */}
-          <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
-            {divisions.length === 0 && (
-              <p className="text-bb-muted/50 text-sm italic px-4 py-3">No divisions yet.</p>
-            )}
-            {divisions.map((div) => {
-              const hasTeams = div.teams.length > 0
-              const isLocked = div.league.status === 'ENDED'
-              return (
-                <details key={div.id} className="group bg-bb-dark">
-                  <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
-                    <Chevron cls="text-bb-muted/60" />
-                    <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{div.name}</span>
-                    <Badge label={div.league.name} cls="border-bb-gold/30 text-bb-gold bg-bb-gold/5 hidden sm:inline" />
-                    <div className="flex items-center gap-1.5 ml-auto shrink-0">
-                      <span className="text-bb-muted/40 text-xs whitespace-nowrap">
-                        {div.teams.length} team{div.teams.length !== 1 ? 's' : ''}
-                      </span>
-                      {div.isHidden && <HiddenBadge />}
-                      {isLocked && <Badge label="Locked" cls="border-bb-crimson/40 text-bb-crimson-bright bg-bb-crimson/5" />}
-                    </div>
-                  </summary>
-
-                  <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3 bg-bb-darker/30">
-                    {isLocked ? (
-                      <p className="text-bb-muted/50 text-xs italic">Season ended — this division is locked.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        <form action={renameDivision} className="flex gap-1.5">
-                          <input type="hidden" name="id" value={div.id} />
-                          <input name="name" defaultValue={div.name} required className={inputCls('flex-1')} />
+                      <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-2 bg-bb-darker/30">
+                        <form action={renameLeague} className="flex gap-1.5">
+                          <input type="hidden" name="id" value={league.id} />
+                          <input name="name" defaultValue={league.name} required className={inputCls('flex-1')} />
                           <button type="submit" className={btnCls('ghost')}>Rename</button>
                         </form>
+                        <form action={setLeagueStatus} className="flex gap-2 items-center">
+                          <input type="hidden" name="id" value={league.id} />
+                          <select name="status" defaultValue={league.status} className={inputCls('flex-1 text-xs')}>
+                            <option value="READY">Ready for first gameday</option>
+                            <option value="ACTIVE">Season started</option>
+                            <option value="ENDED">Season ended</option>
+                          </select>
+                          <button type="submit" className={btnCls('ghost')}>Set Status</button>
+                        </form>
+                        <form action={setLeagueRuleSet} className="flex gap-2 items-center">
+                          <input type="hidden" name="id" value={league.id} />
+                          <select name="ruleSetId" defaultValue={league.ruleSetId ?? ''} className={inputCls('flex-1 text-xs')}>
+                            <option value="">— No rule set —</option>
+                            {activeRuleSets.map((rs) => (
+                              <option key={rs.id} value={rs.id}>{rs.name} · {GAME_TYPE_LABELS[rs.gameType]}</option>
+                            ))}
+                            {league.ruleSet && !activeRuleSets.find((r) => r.id === league.ruleSet!.id) && (
+                              <option value={league.ruleSet.id}>
+                                {league.ruleSet.name} · {GAME_TYPE_LABELS[league.ruleSet.gameType]} (inactive)
+                              </option>
+                            )}
+                          </select>
+                          <button type="submit" className={btnCls('ghost')}>Set Rule Set</button>
+                        </form>
                         <div className="flex gap-2 pt-1 border-t border-bb-border/30">
-                          <form action={toggleDivisionVisibility}>
-                            <input type="hidden" name="id" value={div.id} />
-                            <button type="submit" className={btnCls('ghost')}>{div.isHidden ? 'Show' : 'Hide'}</button>
+                          <form action={toggleLeagueVisibility}>
+                            <input type="hidden" name="id" value={league.id} />
+                            <button type="submit" className={btnCls('ghost')}>{league.isHidden ? 'Show' : 'Hide'}</button>
                           </form>
-                          <form action={deleteDivision}>
-                            <input type="hidden" name="id" value={div.id} />
+                          <form action={deleteLeague}>
+                            <input type="hidden" name="id" value={league.id} />
                             <button
                               type="submit"
                               disabled={hasTeams}
-                              title={hasTeams ? 'Remove all teams from division first' : 'Delete division'}
+                              title={hasTeams ? 'Move or remove all teams first' : 'Delete league'}
                               className={btnCls(hasTeams ? 'muted' : 'danger')}
                             >
                               Delete
@@ -397,65 +421,156 @@ export default async function LeagueManagementPage() {
                           </form>
                         </div>
                       </div>
-                    )}
+                    </details>
+                  )
+                })}
+              </div>
+            </section>
 
-                    {/* Teams */}
-                    <div className="border-t border-bb-border/40 pt-3 space-y-2">
-                      <p className="text-bb-muted text-xs uppercase tracking-widest">Teams in division</p>
-                      {div.teams.length === 0 && (
-                        <p className="text-bb-muted/40 text-xs italic">No teams assigned.</p>
-                      )}
-                      {div.teams.map((team) => (
-                        <div key={team.id} className="flex items-center justify-between">
-                          <span className="text-sm text-white">
-                            {team.name}
-                            <span className="text-bb-muted text-xs ml-2">({team.race.name})</span>
+            {/* Divisions */}
+            <section>
+              <SectionHeading title="Divisions" />
+
+              <details className="group mb-6 bg-bb-dark border border-bb-border rounded-sm">
+                <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                  <Chevron cls="text-bb-muted" />
+                  <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Create new division</span>
+                </summary>
+                <form action={createDivision} className="px-4 pb-4 pt-3 border-t border-bb-border/40 flex gap-2">
+                  <input name="name" required placeholder="Division name" className={inputCls('flex-1')} />
+                  <select name="leagueId" required className={inputCls('w-48')}>
+                    <option value="">— Select league —</option>
+                    {openLeagues.map((l) => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                  <button type="submit" className={btnCls('primary')}>Create</button>
+                </form>
+              </details>
+
+              <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
+                {divisions.length === 0 && (
+                  <p className="text-bb-muted/50 text-sm italic px-4 py-3">No divisions yet.</p>
+                )}
+                {divisions.map((div) => {
+                  const hasTeams = div.teams.length > 0
+                  const isLocked = div.league.status === 'ENDED'
+                  return (
+                    <details key={div.id} className="group bg-bb-dark">
+                      <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                        <Chevron cls="text-bb-muted/60" />
+                        <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{div.name}</span>
+                        <Badge label={div.league.name} cls="border-bb-gold/30 text-bb-gold bg-bb-gold/5 hidden sm:inline" />
+                        <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                          <span className="text-bb-muted/40 text-xs whitespace-nowrap">
+                            {div.teams.length} team{div.teams.length !== 1 ? 's' : ''}
                           </span>
-                          {!isLocked && (
-                            <form action={removeTeamFromDivision}>
-                              <input type="hidden" name="teamId" value={team.id} />
-                              <button type="submit" className={btnCls('danger')}>Remove</button>
+                          {div.isHidden && <HiddenBadge />}
+                          {isLocked && <Badge label="Locked" cls="border-bb-crimson/40 text-bb-crimson-bright bg-bb-crimson/5" />}
+                        </div>
+                      </summary>
+
+                      <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3 bg-bb-darker/30">
+                        {isLocked ? (
+                          <p className="text-bb-muted/50 text-xs italic">Season ended — this division is locked.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            <form action={renameDivision} className="flex gap-1.5">
+                              <input type="hidden" name="id" value={div.id} />
+                              <input name="name" defaultValue={div.name} required className={inputCls('flex-1')} />
+                              <button type="submit" className={btnCls('ghost')}>Rename</button>
+                            </form>
+                            <div className="flex gap-2 pt-1 border-t border-bb-border/30">
+                              <form action={toggleDivisionVisibility}>
+                                <input type="hidden" name="id" value={div.id} />
+                                <button type="submit" className={btnCls('ghost')}>{div.isHidden ? 'Show' : 'Hide'}</button>
+                              </form>
+                              <form action={deleteDivision}>
+                                <input type="hidden" name="id" value={div.id} />
+                                <button
+                                  type="submit"
+                                  disabled={hasTeams}
+                                  title={hasTeams ? 'Remove all teams from division first' : 'Delete division'}
+                                  className={btnCls(hasTeams ? 'muted' : 'danger')}
+                                >
+                                  Delete
+                                </button>
+                              </form>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="border-t border-bb-border/40 pt-3 space-y-2">
+                          <p className="text-bb-muted text-xs uppercase tracking-widest">Teams in division</p>
+                          {div.teams.length === 0 && (
+                            <p className="text-bb-muted/40 text-xs italic">No teams assigned.</p>
+                          )}
+                          {div.teams.map((team) => (
+                            <div key={team.id} className="flex items-center justify-between">
+                              <span className="text-sm text-white">
+                                {team.name}
+                                <span className="text-bb-muted text-xs ml-2">({team.race.name})</span>
+                              </span>
+                              {!isLocked && (
+                                <form action={removeTeamFromDivision}>
+                                  <input type="hidden" name="teamId" value={team.id} />
+                                  <button type="submit" className={btnCls('danger')}>Remove</button>
+                                </form>
+                              )}
+                            </div>
+                          ))}
+                          {!isLocked && teams.length > 0 && (
+                            <form action={assignTeamToDivision} className="flex gap-2 pt-1">
+                              <input type="hidden" name="divisionId" value={div.id} />
+                              <select name="teamId" required className={inputCls('flex-1 text-xs')}>
+                                <option value="">— Add a team —</option>
+                                {teams.map((t) => (
+                                  <option key={t.id} value={t.id}>{t.name} ({t.race.name})</option>
+                                ))}
+                              </select>
+                              <button type="submit" className={btnCls('ghost')}>Add</button>
                             </form>
                           )}
+                          {!isLocked && teams.length === 0 && div.teams.length === 0 && (
+                            <p className="text-bb-muted/30 text-xs italic">No unassigned teams available.</p>
+                          )}
                         </div>
-                      ))}
-                      {!isLocked && teams.length > 0 && (
-                        <form action={assignTeamToDivision} className="flex gap-2 pt-1">
-                          <input type="hidden" name="divisionId" value={div.id} />
-                          <select name="teamId" required className={inputCls('flex-1 text-xs')}>
-                            <option value="">— Add a team —</option>
-                            {teams.map((t) => (
-                              <option key={t.id} value={t.id}>{t.name} ({t.race.name})</option>
-                            ))}
-                          </select>
-                          <button type="submit" className={btnCls('ghost')}>Add</button>
-                        </form>
-                      )}
-                      {!isLocked && teams.length === 0 && div.teams.length === 0 && (
-                        <p className="text-bb-muted/30 text-xs italic">No unassigned teams available.</p>
-                      )}
-                    </div>
-                  </div>
-                </details>
-              )
-            })}
-          </div>
-        </section>
+                      </div>
+                    </details>
+                  )
+                })}
+              </div>
+            </section>
+          </>
+        )}
 
-        {/* ── Users (admin only) ── */}
-        {isAdmin && (
+        {/* ── Tab 2: Matches & Schedule ── */}
+        {tab === 'matches' && (
+          <section>
+            <SectionHeading title="Matches & Schedule" />
+            <MatchesTab
+              matchLeagues={matchLeagues}
+              selectedLeagueId={selectedLeagueId}
+              leagueDivisions={leagueDivisions}
+              leagueTeams={leagueTeams.map((t) => ({ id: t.id, name: t.name, divisionId: t.divisionId }))}
+              matches={serializedMatches}
+            />
+          </section>
+        )}
+
+        {/* ── Tab 3: Users (admin only) ── */}
+        {isAdmin && tab === 'users' && (
           <section>
             <SectionHeading title="Users" />
 
-            {/* Create user */}
             <details className="group mb-6 bg-bb-dark border border-bb-border rounded-sm">
               <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
                 <Chevron cls="text-bb-muted" />
                 <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Create new user</span>
               </summary>
               <form action={createCoach} className="px-4 pb-4 pt-3 border-t border-bb-border/40 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <input name="name"     required placeholder="Full name"                     className={inputCls()} />
-                <input name="email"    required type="email"    placeholder="Email address"  className={inputCls()} />
+                <input name="name"     required placeholder="Full name"                              className={inputCls()} />
+                <input name="email"    required type="email"    placeholder="Email address"          className={inputCls()} />
                 <select name="role" required className={inputCls()}>
                   <option value="COACH">Coach</option>
                   <option value="COMMISH">Commish</option>
@@ -466,7 +581,6 @@ export default async function LeagueManagementPage() {
               </form>
             </details>
 
-            {/* User list */}
             <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
               {coaches.length === 0 && (
                 <p className="text-bb-muted/50 text-sm italic px-4 py-3">No users yet.</p>

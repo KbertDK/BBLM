@@ -73,12 +73,15 @@ export async function createTeam(formData: FormData) {
   if (totalCost + staffCost > league.ruleSet.startIncome) return
   if (totalPlayers > league.ruleSet.numberOfPlayers)      return
 
+  const treasury = league.ruleSet.startIncome - totalCost - staffCost
+
   const team = await prisma.team.create({
     data: {
       name,
       raceId,
       coachId:  session.coachId,
       leagueId,
+      treasury,
       rerolls,
       assistantCoaches,
       cheerleaders,

@@ -27,20 +27,51 @@ export async function getUpcomingMatches(): Promise<MatchSummary[]> {
 
 export async function getLiveMatches(): Promise<MatchSummary[]> {
   const matches = await prisma.match.findMany({
-    where: { status: 'LIVE' },
+    where:   { status: 'LIVE' },
     orderBy: { scheduledAt: 'asc' },
-    include: matchInclude,
+    include: {
+      ...matchInclude,
+      events: {
+        orderBy: { createdAt: 'desc' },
+        take:    3,
+        select:  { id: true, type: true, label: true },
+      },
+    },
   })
 
   return matches.map((m) => ({
-    id: m.id,
-    round: m.round,
+    id:           m.id,
+    round:        m.round,
     homeTeamName: m.homeTeam.name,
     awayTeamName: m.awayTeam.name,
-    scheduledAt: m.scheduledAt,
-    homeScore: m.homeScore,
-    awayScore: m.awayScore,
+    scheduledAt:  m.scheduledAt,
+    homeScore:    m.homeScore,
+    awayScore:    m.awayScore,
+    recentEvents: m.events,
   }))
+}
+
+export async function getMatchesByLeague(leagueId: string) {
+  return prisma.match.findMany({
+    where: { leagueId },
+    include: {
+      homeTeam: { select: { id: true, name: true, divisionId: true } },
+      awayTeam: { select: { id: true, name: true, divisionId: true } },
+    },
+    orderBy: [{ round: 'asc' }, { scheduledAt: { sort: 'asc', nulls: 'last' } }],
+  })
+}
+
+export async function getMatchReport(matchId: string) {
+  return prisma.match.findUnique({
+    where: { id: matchId, status: 'COMPLETED' },
+    include: {
+      homeTeam: { select: { id: true, name: true, race: { select: { name: true } } } },
+      awayTeam: { select: { id: true, name: true, race: { select: { name: true } } } },
+      league:   { select: { name: true, season: true } },
+      events:   { orderBy: { createdAt: 'asc' } },
+    },
+  })
 }
 
 export async function getLatestResults(): Promise<MatchResult[]> {

@@ -32,8 +32,9 @@ export default async function TeamsPage() {
         <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-xl shadow-black/50 mb-8">
           <div className="grid grid-cols-12 text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-5 py-3 gap-2">
             <span className="col-span-1 text-center">#</span>
-            <span className="col-span-4">Team</span>
-            <span className="col-span-3">Coach</span>
+            <span className="col-span-3">Team</span>
+            <span className="col-span-2">Coach</span>
+            <span className="col-span-2 text-right pr-2" title="Team Value in thousands">TV</span>
             <span className="col-span-1 text-center">W</span>
             <span className="col-span-1 text-center">D</span>
             <span className="col-span-1 text-center">L</span>
@@ -55,7 +56,7 @@ export default async function TeamsPage() {
                   {i + 1}
                 </span>
 
-                <div className="col-span-4 flex flex-col gap-1">
+                <div className="col-span-3 flex flex-col gap-1">
                   <span className="font-heading font-bold text-white group-hover:text-bb-gold transition-colors text-sm leading-tight">
                     {team.name}
                   </span>
@@ -64,7 +65,11 @@ export default async function TeamsPage() {
                   </span>
                 </div>
 
-                <span className="col-span-3 text-sm text-bb-muted truncate">{team.coachName}</span>
+                <span className="col-span-2 text-sm text-bb-muted truncate">{team.coachName}</span>
+                <span className="col-span-2 text-right pr-2 font-heading font-bold text-sm text-bb-gold/80 tabular-nums" title="Team Value">
+                  {team.teamValue.toLocaleString()}
+                  <span className="text-bb-muted/50 font-normal text-xs ml-0.5">k</span>
+                </span>
                 <span className="col-span-1 text-center text-sm font-semibold text-green-400">{team.wins}</span>
                 <span className="col-span-1 text-center text-sm text-bb-muted">{team.draws}</span>
                 <span className="col-span-1 text-center text-sm font-semibold text-bb-crimson-bright">{team.losses}</span>

@@ -25,8 +25,9 @@ export async function getAllTeams(): Promise<TeamSummary[]> {
 }
 
 export interface TeamListEntry extends TeamSummary {
-  coachName: string
+  coachName:  string
   leagueName: string
+  teamValue:  number
 }
 
 export async function getTeamById(id: string) {
@@ -61,14 +62,31 @@ export async function getLeagueTeams(): Promise<TeamListEntry[]> {
   const teams = await prisma.team.findMany({
     orderBy: [{ wins: 'desc' }, { draws: 'desc' }, { losses: 'asc' }],
     include: {
-      race:   { select: { name: true } },
-      coach:  { select: { name: true, alias: true } },
-      league: { select: { name: true } },
+      race:    { select: { name: true, rerollPrice: true } },
+      coach:   { select: { name: true, alias: true } },
+      league:  { select: { name: true } },
+      players: {
+        where:  { status: { in: ['ACTIVE', 'MNG'] } },
+        select: { value: true, playerType: { select: { cost: true } } },
+      },
     },
   })
-  return teams.map((t) => ({
-    ...mapTeam(t),
-    coachName:  t.coach.alias ?? t.coach.name,
-    leagueName: t.league.name,
-  }))
+  return teams.map((t) => {
+    const playerValue = t.players.reduce((s, p) => s + (p.value > 0 ? p.value : p.playerType.cost), 0)
+    const teamValue   = Math.round(
+      (playerValue
+        + t.rerolls          * t.race.rerollPrice
+        + t.assistantCoaches * 10000
+        + t.cheerleaders     * 10000
+        + t.fanFactor        * 10000
+        + (t.apothecary      ? 50000 : 0)
+      ) / 1000
+    )
+    return {
+      ...mapTeam(t),
+      coachName:  t.coach.alias ?? t.coach.name,
+      leagueName: t.league.name,
+      teamValue,
+    }
+  })
 }

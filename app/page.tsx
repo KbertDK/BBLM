@@ -1,19 +1,23 @@
 import { getLatestNews } from '@/lib/queries/news'
 import { getUpcomingMatches, getLiveMatches, getLatestResults } from '@/lib/queries/matches'
-import { getAllTeams } from '@/lib/queries/teams'
+import { getTeamsByCoach } from '@/lib/queries/teams'
+import { getSession } from '@/lib/auth'
 import NewsSection from '@/components/news/NewsSection'
 import MatchesPanel from '@/components/matches/MatchesPanel'
 import TeamQuickAccess from '@/components/teams/TeamQuickAccess'
+import SponsorBanner from '@/components/adverts/SponsorBanner'
 
-export const revalidate = 60
+export const revalidate = 0
 
 export default async function HomePage() {
-  const [news, upcoming, live, results, teams] = await Promise.all([
+  const session = await getSession()
+
+  const [news, upcoming, live, results, myTeams] = await Promise.all([
     getLatestNews(),
     getUpcomingMatches(),
     getLiveMatches(),
     getLatestResults(),
-    getAllTeams(),
+    session ? getTeamsByCoach(session.coachId) : Promise.resolve(null),
   ])
 
   return (
@@ -37,7 +41,8 @@ export default async function HomePage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16 flex flex-col gap-20">
         <MatchesPanel upcoming={upcoming} live={live} results={results} />
         <NewsSection posts={news} />
-        <TeamQuickAccess teams={teams} />
+        <TeamQuickAccess teams={myTeams} />
+        <SponsorBanner />
       </div>
     </div>
   )
