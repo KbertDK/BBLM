@@ -8,11 +8,15 @@ import {
   assignTeamToDivision, removeTeamFromDivision,
 } from './actions'
 import {
+  createTournament, renameTournament, toggleTournamentCrossDiv,
+  addDivisionToTournament, removeDivisionFromTournament, deleteTournament,
+} from './tournament-actions'
+import {
   createRuleSet, updateRuleSet, toggleRuleSetStatus, deleteRuleSet, setLeagueRuleSet,
 } from './ruleset-actions'
 import {
   createCoach, renameCoach, updateCoachEmail, resetCoachPassword,
-  toggleCoachActive, deleteCoach,
+  toggleCoachActive, deleteCoach, setCoachPrimaryLeague, setCoachRole,
 } from './coach-actions'
 import MatchesTab from './MatchesTab'
 
@@ -107,7 +111,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
   const { tab: rawTab, leagueId: selectedLeagueId, divisionId: selectedDivisionId } = await searchParams
   const tab = rawTab ?? 'leagues'
 
-  const [ruleSets, leagues, divisions, teams] = await Promise.all([
+  const [ruleSets, leagues, divisions, teams, tournaments] = await Promise.all([
     prisma.ruleSet.findMany({
       orderBy: { name: 'asc' },
       include: { _count: { select: { leagues: true } } },
@@ -130,6 +134,15 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
       where:   { divisionId: null },
       orderBy: { name: 'asc' },
       include: { race: { select: { name: true } } },
+    }),
+    prisma.tournament.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: {
+        divisions: {
+          include:  { league: { select: { name: true } } },
+          orderBy:  { name: 'asc' },
+        },
+      },
     }),
   ])
 
@@ -357,8 +370,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                       <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
                         <Chevron cls="text-bb-muted/60" />
                         <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{league.name}</span>
-                        <span className="text-bb-muted/50 text-xs hidden sm:block">S{league.season}</span>
-                        <div className="flex items-center gap-1.5 ml-auto shrink-0">
+<div className="flex items-center gap-1.5 ml-auto shrink-0">
                           <Badge label={STATUS_LABELS[league.status]} cls={STATUS_BADGE_CLS[league.status]} />
                           {league.ruleSet && (
                             <Badge
@@ -541,6 +553,124 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                 })}
               </div>
             </section>
+
+            {/* Tournaments */}
+            <section>
+              <SectionHeading title="Tournaments" />
+
+              <details className="group mb-6 bg-bb-dark border border-bb-border rounded-sm">
+                <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                  <Chevron cls="text-bb-muted" />
+                  <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Create new tournament</span>
+                </summary>
+                <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-2">
+                  <form action={createTournament} className="space-y-2">
+                    <div className="flex gap-2">
+                      <input name="name" required placeholder="Tournament name" className={inputCls('flex-1')} />
+                      <select name="divisionId" required className={inputCls('w-52')}>
+                        <option value="">— Select division —</option>
+                        {divisions.map((d) => (
+                          <option key={d.id} value={d.id}>{d.name} ({d.league.name})</option>
+                        ))}
+                      </select>
+                      <button type="submit" className={btnCls('primary')}>Create</button>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-bb-muted cursor-pointer select-none">
+                      <input type="checkbox" name="crossDivision" value="1" className="accent-bb-gold" />
+                      Cross-division — can span multiple divisions
+                    </label>
+                  </form>
+                </div>
+              </details>
+
+              <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
+                {tournaments.length === 0 && (
+                  <p className="text-bb-muted/50 text-sm italic px-4 py-3">No tournaments yet.</p>
+                )}
+                {tournaments.map((t) => (
+                  <details key={t.id} className="group bg-bb-dark">
+                    <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                      <Chevron cls="text-bb-muted/60" />
+                      <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{t.name}</span>
+                      <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                        {t.crossDivision && (
+                          <Badge label="Cross-division" cls="border-blue-700/50 text-blue-400 bg-blue-900/10" />
+                        )}
+                        <span className="text-bb-muted/40 text-xs whitespace-nowrap">
+                          {t.divisions.length} division{t.divisions.length !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </summary>
+
+                    <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3 bg-bb-darker/30">
+                      <form action={renameTournament} className="flex gap-1.5">
+                        <input type="hidden" name="id" value={t.id} />
+                        <input name="name" defaultValue={t.name} required className={inputCls('flex-1')} />
+                        <button type="submit" className={btnCls('ghost')}>Rename</button>
+                      </form>
+
+                      <div className="flex gap-2 pt-1 border-t border-bb-border/30">
+                        <form action={toggleTournamentCrossDiv}>
+                          <input type="hidden" name="id" value={t.id} />
+                          <button type="submit" className={btnCls('ghost')}>
+                            {t.crossDivision ? 'Make single-division' : 'Make cross-division'}
+                          </button>
+                        </form>
+                        <form action={deleteTournament} className="ml-auto">
+                          <input type="hidden" name="id" value={t.id} />
+                          <button type="submit" className={btnCls('danger')}>Delete</button>
+                        </form>
+                      </div>
+
+                      <div className="border-t border-bb-border/40 pt-3 space-y-2">
+                        <p className="text-bb-muted text-xs uppercase tracking-widest">Divisions</p>
+                        {t.divisions.length === 0 && (
+                          <p className="text-bb-muted/40 text-xs italic">No divisions linked.</p>
+                        )}
+                        {t.divisions.map((d) => {
+                          const canRemove = t.divisions.length > 1
+                          return (
+                            <div key={d.id} className="flex items-center justify-between">
+                              <span className="text-sm text-white">
+                                {d.name}
+                                <span className="text-bb-muted text-xs ml-2">({d.league.name})</span>
+                              </span>
+                              <form action={removeDivisionFromTournament}>
+                                <input type="hidden" name="tournamentId" value={t.id} />
+                                <input type="hidden" name="divisionId" value={d.id} />
+                                <button
+                                  type="submit"
+                                  disabled={!canRemove}
+                                  title={!canRemove ? 'Cannot remove the last division' : 'Remove division'}
+                                  className={btnCls(!canRemove ? 'muted' : 'danger')}
+                                >
+                                  Remove
+                                </button>
+                              </form>
+                            </div>
+                          )
+                        })}
+                        {(t.crossDivision || t.divisions.length === 0) && (() => {
+                          const available = divisions.filter((d) => !t.divisions.some((td) => td.id === d.id))
+                          return available.length > 0 ? (
+                            <form action={addDivisionToTournament} className="flex gap-2 pt-1">
+                              <input type="hidden" name="tournamentId" value={t.id} />
+                              <select name="divisionId" required className={inputCls('flex-1 text-xs')}>
+                                <option value="">— Add a division —</option>
+                                {available.map((d) => (
+                                  <option key={d.id} value={d.id}>{d.name} ({d.league.name})</option>
+                                ))}
+                              </select>
+                              <button type="submit" className={btnCls('ghost')}>Add</button>
+                            </form>
+                          ) : null
+                        })()}
+                      </div>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            </section>
           </>
         )}
 
@@ -616,6 +746,27 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                         <input name="name" defaultValue={coach.name} required className={inputCls('flex-1')} />
                         <button type="submit" className={btnCls('ghost')}>Rename</button>
                       </form>
+                      <form action={setCoachRole} className="flex gap-1.5">
+                        <input type="hidden" name="id" value={coach.id} />
+                        <select
+                          name="role"
+                          defaultValue={coach.role}
+                          disabled={isSelf}
+                          className={inputCls('flex-1 text-xs')}
+                        >
+                          <option value="COACH">Coach</option>
+                          <option value="COMMISH">Commish</option>
+                          <option value="ADMIN">Admin</option>
+                        </select>
+                        <button
+                          type="submit"
+                          disabled={isSelf}
+                          title={isSelf ? 'Cannot change your own role' : undefined}
+                          className={btnCls(isSelf ? 'muted' : 'ghost')}
+                        >
+                          Set Role
+                        </button>
+                      </form>
                       <form action={updateCoachEmail} className="flex gap-1.5">
                         <input type="hidden" name="id" value={coach.id} />
                         <input name="email" type="email" defaultValue={coach.email} required className={inputCls('flex-1')} />
@@ -625,6 +776,16 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                         <input type="hidden" name="id" value={coach.id} />
                         <input name="password" type="password" required minLength={6} placeholder="New password (min 6 chars)" className={inputCls('flex-1')} />
                         <button type="submit" className={btnCls('ghost')}>Reset Password</button>
+                      </form>
+                      <form action={setCoachPrimaryLeague} className="flex gap-1.5">
+                        <input type="hidden" name="id" value={coach.id} />
+                        <select name="primaryLeagueId" defaultValue={coach.primaryLeagueId ?? ''} className={inputCls('flex-1')}>
+                          <option value="">— No primary league —</option>
+                          {leagues.map((l) => (
+                            <option key={l.id} value={l.id}>{l.name} (Season {l.season})</option>
+                          ))}
+                        </select>
+                        <button type="submit" className={btnCls('ghost')}>Set League</button>
                       </form>
                       <div className="flex gap-2 pt-2 border-t border-bb-border/30">
                         <form action={toggleCoachActive}>

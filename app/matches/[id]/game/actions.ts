@@ -27,10 +27,10 @@ async function requireMatchParticipant(matchId: string) {
   return ok ? session : null
 }
 
-export async function pushMatchEvent(matchId: string, type: string, label: string) {
+export async function pushMatchEvent(matchId: string, type: string, label: string, scoringTeam?: string) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
-  await prisma.matchEvent.create({ data: { matchId, type, label } })
+  await prisma.matchEvent.create({ data: { matchId, type, label, scoringTeam: scoringTeam ?? null } })
   revalidatePath('/')
 }
 
@@ -42,7 +42,8 @@ export async function deleteLastMatchEvent(matchId: string) {
     orderBy: { createdAt: 'desc' },
     select:  { id: true },
   })
-  if (last) await prisma.matchEvent.delete({ where: { id: last.id } })
+  if (!last) return
+  await prisma.matchEvent.delete({ where: { id: last.id } })
   revalidatePath('/')
 }
 

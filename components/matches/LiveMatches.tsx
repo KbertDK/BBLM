@@ -21,11 +21,11 @@ export default function LiveMatches({ matches }: Props) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
-  // Auto-refresh every 10 minutes
+  // Auto-refresh every 30 seconds during live matches
   useEffect(() => {
     const id = setInterval(() => {
       startTransition(() => { router.refresh() })
-    }, 10 * 60 * 1000)
+    }, 30 * 1000)
     return () => clearInterval(id)
   }, [router])
 
@@ -40,19 +40,28 @@ export default function LiveMatches({ matches }: Props) {
           On The Pitch
           <LiveBadge />
         </span>
-        <button
-          onClick={handleRefresh}
-          disabled={isPending}
-          title="Refresh live scores"
-          className="inline-flex items-center gap-1 text-[10px] px-2 py-1 border border-bb-crimson/30 text-bb-muted hover:text-bb-crimson-bright hover:border-bb-crimson/60 rounded-sm transition-colors disabled:opacity-40 font-heading tracking-widest uppercase"
-        >
-          {isPending ? (
-            <span className="animate-spin inline-block">↻</span>
-          ) : (
-            '↻'
-          )}
-          Update
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => window.open('/scoreboard', '_blank')}
+            title="Open full-screen scoreboard"
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 border border-bb-gold/30 text-bb-gold/60 hover:text-bb-gold hover:border-bb-gold/60 rounded-sm transition-colors font-heading tracking-widest uppercase"
+          >
+            📺 Big Screen
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={isPending}
+            title="Refresh live scores"
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 border border-bb-crimson/30 text-bb-muted hover:text-bb-crimson-bright hover:border-bb-crimson/60 rounded-sm transition-colors disabled:opacity-40 font-heading tracking-widest uppercase"
+          >
+            {isPending ? (
+              <span className="animate-spin inline-block">↻</span>
+            ) : (
+              '↻'
+            )}
+            Update
+          </button>
+        </div>
       </h3>
 
       {matches.length === 0 ? (
@@ -66,22 +75,31 @@ export default function LiveMatches({ matches }: Props) {
             key={m.id}
             className="rounded-sm p-4 border border-bb-crimson/40 bg-bb-crimson/5 hover:bg-bb-crimson/10 transition-colors"
           >
-            {/* Score */}
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex-1 text-center">
-                <div className="text-white font-semibold text-sm mb-1 truncate">{m.homeTeamName}</div>
-                <div className="font-heading text-3xl font-black text-bb-gold">
-                  {m.homeScore ?? 0}
-                </div>
+            {/* Score block */}
+            <div className="space-y-1">
+              {/* Team names */}
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex-1 text-white font-semibold text-sm truncate text-center">{m.homeTeamName}</div>
+                <div className="w-12 shrink-0" />
+                <div className="flex-1 text-white font-semibold text-sm truncate text-center">{m.awayTeamName}</div>
               </div>
-              <div className="shrink-0 text-center">
-                <div className="text-bb-muted text-xs uppercase tracking-widest">vs</div>
+              {/* TD */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 text-center font-heading text-3xl font-black text-bb-gold">{m.homeScore ?? 0}</div>
+                <div className="w-12 shrink-0 text-center text-xs text-bb-muted/60">🏈</div>
+                <div className="flex-1 text-center font-heading text-3xl font-black text-bb-gold">{m.awayScore ?? 0}</div>
               </div>
-              <div className="flex-1 text-center">
-                <div className="text-white font-semibold text-sm mb-1 truncate">{m.awayTeamName}</div>
-                <div className="font-heading text-3xl font-black text-bb-gold">
-                  {m.awayScore ?? 0}
-                </div>
+              {/* CAS */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 text-center font-heading text-sm font-bold text-bb-muted">{m.homeCasScore ?? 0}</div>
+                <div className="w-12 shrink-0 text-center text-xs text-bb-muted/60">💀 CAS</div>
+                <div className="flex-1 text-center font-heading text-sm font-bold text-bb-muted">{m.awayCasScore ?? 0}</div>
+              </div>
+              {/* Kills */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 text-center font-heading text-sm font-bold text-bb-muted">{m.homeKillScore ?? 0}</div>
+                <div className="w-12 shrink-0 text-center text-xs text-bb-muted/60">☠ Kills</div>
+                <div className="flex-1 text-center font-heading text-sm font-bold text-bb-muted">{m.awayKillScore ?? 0}</div>
               </div>
             </div>
 

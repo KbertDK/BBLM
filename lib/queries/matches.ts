@@ -33,22 +33,30 @@ export async function getLiveMatches(): Promise<MatchSummary[]> {
       ...matchInclude,
       events: {
         orderBy: { createdAt: 'desc' },
-        take:    3,
-        select:  { id: true, type: true, label: true },
+        select:  { id: true, type: true, label: true, scoringTeam: true },
       },
     },
   })
 
-  return matches.map((m) => ({
-    id:           m.id,
-    round:        m.round,
-    homeTeamName: m.homeTeam.name,
-    awayTeamName: m.awayTeam.name,
-    scheduledAt:  m.scheduledAt,
-    homeScore:    m.homeScore,
-    awayScore:    m.awayScore,
-    recentEvents: m.events,
-  }))
+  return matches.map((m) => {
+    const cas   = m.events.filter((e) => e.type === 'CASUALTY' && !e.label.endsWith('[KO]'))
+    const kills = m.events.filter((e) => e.type === 'CASUALTY' && e.label.endsWith('[DEAD]'))
+    return {
+      id:            m.id,
+      round:         m.round,
+      homeTeamName:  m.homeTeam.name,
+      awayTeamName:  m.awayTeam.name,
+      scheduledAt:   m.scheduledAt,
+      homeScore:     m.events.filter((e) => e.type === 'TD' && e.scoringTeam === 'home').length,
+      awayScore:     m.events.filter((e) => e.type === 'TD' && e.scoringTeam === 'away').length,
+      recentEvents:  m.events.slice(0, 3),
+      allEvents:     [...m.events].reverse(), // chronological order for the ticker
+      homeCasScore:  cas.filter((e)   => e.scoringTeam === 'home').length,
+      awayCasScore:  cas.filter((e)   => e.scoringTeam === 'away').length,
+      homeKillScore: kills.filter((e) => e.scoringTeam === 'home').length,
+      awayKillScore: kills.filter((e) => e.scoringTeam === 'away').length,
+    }
+  })
 }
 
 export async function getMatchesByLeague(leagueId: string) {

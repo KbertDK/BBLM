@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 
 export const config = {
-  matcher: ['/teams/:path+', '/league-management', '/league-management/:path*', '/profile'],
+  matcher: ['/teams/:path+', '/league-management', '/league-management/:path*', '/profile', '/data-manager'],
 }
 
 export async function middleware(req: NextRequest) {
@@ -25,6 +25,13 @@ export async function middleware(req: NextRequest) {
     if (pathname.startsWith('/league-management')) {
       const role = payload['role'] as string | undefined
       if (role !== 'ADMIN' && role !== 'COMMISH') {
+        return NextResponse.redirect(new URL('/', req.url))
+      }
+    }
+
+    if (pathname.startsWith('/data-manager')) {
+      const role = payload['role'] as string | undefined
+      if (role !== 'ADMIN') {
         return NextResponse.redirect(new URL('/', req.url))
       }
     }

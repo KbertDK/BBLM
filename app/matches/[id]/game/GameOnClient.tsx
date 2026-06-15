@@ -72,9 +72,9 @@ interface GameState {
 }
 
 type ModalState =
-  | { type: 'td';          step: 1 | 2 | 3; team: 'home' | 'away' | null; scorerId: string | null; hasPass: boolean; passerId: string | null }
-  | { type: 'casualty';    step: 1 | 2 | 3 | 4; attackTeam: 'home' | 'away' | null; attackerId: string | null; victimId: string | null; result: CasualtyResult | null }
-  | { type: 'interception'; step: 1 | 2; team: 'home' | 'away' | null; playerId: string | null }
+  | { type: 'td';          step: 0 | 1 | 2 | 3; eventTurn: number | null; team: 'home' | 'away' | null; scorerId: string | null; hasPass: boolean; passerId: string | null }
+  | { type: 'casualty';    step: 0 | 1 | 2 | 3 | 4; eventTurn: number | null; attackTeam: 'home' | 'away' | null; attackerId: string | null; victimId: string | null; result: CasualtyResult | null }
+  | { type: 'interception'; step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; playerId: string | null }
   | null
 
 interface PlayerUpdate {
@@ -395,6 +395,32 @@ export default function GameOnClient({ matchData }: Props) {
   const score  = useMemo(() => computeScore(state.events), [state.events])
   const half   = state.turn >= 9 ? 2 : 1
 
+  const cas = useMemo(() => ({
+    home: state.events.filter(
+      (e) => e.type === 'CASUALTY' && e.attackerId &&
+        playerTeam.get(e.attackerId) === 'home' &&
+        e.casualtyResult !== 'KO'
+    ).length,
+    away: state.events.filter(
+      (e) => e.type === 'CASUALTY' && e.attackerId &&
+        playerTeam.get(e.attackerId) === 'away' &&
+        e.casualtyResult !== 'KO'
+    ).length,
+  }), [state.events, playerTeam])
+
+  const kills = useMemo(() => ({
+    home: state.events.filter(
+      (e) => e.type === 'CASUALTY' && e.attackerId &&
+        playerTeam.get(e.attackerId) === 'home' &&
+        e.casualtyResult === 'DEAD'
+    ).length,
+    away: state.events.filter(
+      (e) => e.type === 'CASUALTY' && e.attackerId &&
+        playerTeam.get(e.attackerId) === 'away' &&
+        e.casualtyResult === 'DEAD'
+    ).length,
+  }), [state.events, playerTeam])
+
   const matchSspMap = useMemo(() => {
     const map = new Map<string, number>()
     for (const p of allPlayers) {
@@ -423,7 +449,7 @@ export default function GameOnClient({ matchData }: Props) {
 
   function pushEvent(event: MatchEvent) {
     setState((prev) => ({ ...prev, events: [...prev.events, event] }))
-    persistTransition(async () => { await pushMatchEvent(matchData.id, event.type, event.label) })
+    persistTransition(async () => { await pushMatchEvent(matchData.id, event.type, event.label, event.scoringTeam) })
   }
 
   function undoLast() {
@@ -464,37 +490,37 @@ export default function GameOnClient({ matchData }: Props) {
 
   function commitTD() {
     if (modal?.type !== 'td') return
-    const { team, scorerId, passerId, hasPass } = modal
-    if (!team || !scorerId) return
+    const { team, scorerId, passerId, hasPass, eventTurn } = modal
+    if (!team || !scorerId || !eventTurn) return
     const scorer   = playerById.get(scorerId)
     const passer   = passerId && hasPass ? playerById.get(passerId) : null
     const teamName = team === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
     const label    = passer
-      ? `T${state.turn} · TD · ${playerLabel(scorer!)} (${teamName}) — pass from ${playerLabel(passer)}`
-      : `T${state.turn} · TD · ${playerLabel(scorer!)} (${teamName})`
-    pushEvent({ id: uid(), type: 'TD', turn: state.turn, scoringTeam: team, scorerId, passerId: passer ? passerId! : undefined, label })
+      ? `T${eventTurn} · TD · ${playerLabel(scorer!)} (${teamName}) — pass from ${playerLabel(passer)}`
+      : `T${eventTurn} · TD · ${playerLabel(scorer!)} (${teamName})`
+    pushEvent({ id: uid(), type: 'TD', turn: eventTurn, scoringTeam: team, scorerId, passerId: passer ? passerId! : undefined, label })
     setModal(null)
   }
 
   function commitCasualty() {
     if (modal?.type !== 'casualty') return
-    const { attackerId, victimId, result } = modal
-    if (!attackerId || !victimId || !result) return
+    const { attackTeam, attackerId, victimId, result, eventTurn } = modal
+    if (!attackTeam || !attackerId || !victimId || !result || !eventTurn) return
     const attacker = playerById.get(attackerId)!
     const victim   = playerById.get(victimId)!
-    const atkTeam  = playerTeam.get(attackerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
-    const label    = `T${state.turn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]`
-    pushEvent({ id: uid(), type: 'CASUALTY', turn: state.turn, attackerId, victimId, casualtyResult: result, label })
+    const atkTeam  = attackTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    const label    = `T${eventTurn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]`
+    pushEvent({ id: uid(), type: 'CASUALTY', turn: eventTurn, scoringTeam: attackTeam, attackerId, victimId, casualtyResult: result, label })
     setModal(null)
   }
 
   function commitInterception() {
     if (modal?.type !== 'interception') return
-    const { playerId } = modal
-    if (!playerId) return
+    const { playerId, eventTurn } = modal
+    if (!playerId || !eventTurn) return
     const p    = playerById.get(playerId)!
     const team = playerTeam.get(playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
-    pushEvent({ id: uid(), type: 'INTERCEPTION', turn: state.turn, interceptorId: playerId, label: `T${state.turn} · INT · ${playerLabel(p)} (${team})` })
+    pushEvent({ id: uid(), type: 'INTERCEPTION', turn: eventTurn, interceptorId: playerId, label: `T${eventTurn} · INT · ${playerLabel(p)} (${team})` })
     setModal(null)
   }
 
@@ -673,37 +699,44 @@ export default function GameOnClient({ matchData }: Props) {
               <img src={homeLogo} alt={matchData.homeTeam.raceName} className="w-10 h-10 object-contain opacity-90" />
             </button>
           )}
-          <div className="flex-1 text-center">
-            <div className="text-xs text-bb-muted font-heading uppercase tracking-widest mb-0.5">{matchData.homeTeam.name}</div>
-            <div className="font-heading text-4xl font-black text-bb-gold">{score.home}</div>
-          </div>
-          <div className="shrink-0 text-center">
-            <div className="text-bb-muted text-[10px] font-heading tracking-widest uppercase mb-0.5">
-              {half === 1 ? '1st Half' : '2nd Half'}
+
+          <div className="flex-1 flex flex-col items-center gap-0.5">
+            {/* Team names */}
+            <div className="grid grid-cols-[1fr_auto_1fr] w-full">
+              <div className="text-xs text-bb-muted font-heading uppercase tracking-widest text-right pr-2">{matchData.homeTeam.name}</div>
+              <div className="w-16" />
+              <div className="text-xs text-bb-muted font-heading uppercase tracking-widest text-left pl-2">{matchData.awayTeam.name}</div>
             </div>
-            <div className="text-white font-heading text-lg font-bold">–</div>
-            <div className="flex items-center justify-center gap-1 mt-1">
-              <button
-                onClick={() => setState((prev) => ({ ...prev, turn: Math.max(1, prev.turn - 1) }))}
-                disabled={state.turn <= 1}
-                className="w-5 h-5 flex items-center justify-center text-bb-muted hover:text-white disabled:opacity-20 transition-colors text-xs leading-none"
-                aria-label="Previous turn"
-              >‹</button>
-              <span className="text-[11px] font-heading text-bb-muted/80 min-w-[36px] text-center">
-                T {state.turn}
+
+            {/* TD row */}
+            <div className="grid grid-cols-[1fr_auto_1fr] w-full items-center">
+              <div className="font-heading text-4xl font-black text-bb-gold text-right pr-3">{score.home}</div>
+              <div className="text-xl w-16 text-center">🏈</div>
+              <div className="font-heading text-4xl font-black text-bb-gold text-left pl-3">{score.away}</div>
+            </div>
+
+            {/* CAS row */}
+            <div className="grid grid-cols-[1fr_auto_1fr] w-full items-center">
+              <div className="font-heading text-lg font-bold text-white text-right pr-3">{cas.home}</div>
+              <div className="text-[11px] text-bb-muted font-heading tracking-wide w-16 text-center">💀 CAS</div>
+              <div className="font-heading text-lg font-bold text-white text-left pl-3">{cas.away}</div>
+            </div>
+
+            {/* Kills row */}
+            <div className="grid grid-cols-[1fr_auto_1fr] w-full items-center">
+              <div className="font-heading text-lg font-bold text-white text-right pr-3">{kills.home}</div>
+              <div className="text-[11px] text-bb-muted font-heading tracking-wide w-16 text-center">☠ Kills</div>
+              <div className="font-heading text-lg font-bold text-white text-left pl-3">{kills.away}</div>
+            </div>
+
+            {/* Half indicator */}
+            <div className="mt-1">
+              <span className="text-[10px] text-bb-muted/60 font-heading uppercase tracking-widest">
+                {hasHalftime ? '2nd Half' : '1st Half'}
               </span>
-              <button
-                onClick={() => setState((prev) => ({ ...prev, turn: Math.min(16, prev.turn + 1) }))}
-                disabled={state.turn >= 16}
-                className="w-5 h-5 flex items-center justify-center text-bb-muted hover:text-white disabled:opacity-20 transition-colors text-xs leading-none"
-                aria-label="Next turn"
-              >›</button>
             </div>
           </div>
-          <div className="flex-1 text-center">
-            <div className="text-xs text-bb-muted font-heading uppercase tracking-widest mb-0.5">{matchData.awayTeam.name}</div>
-            <div className="font-heading text-4xl font-black text-bb-gold">{score.away}</div>
-          </div>
+
           {awayLogo && (
             <button onClick={() => setRosterSide('away')} title="View away roster"
               className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
@@ -718,17 +751,17 @@ export default function GameOnClient({ matchData }: Props) {
           <div className="border-r border-bb-border p-4 flex flex-col gap-3 overflow-y-auto">
             <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest mb-1">Record Event</p>
 
-            <button onClick={() => setModal({ type: 'td', step: 1, team: null, scorerId: null, hasPass: false, passerId: null })}
+            <button onClick={() => setModal({ type: 'td', step: 0, eventTurn: null, team: null, scorerId: null, hasPass: false, passerId: null })}
               className={btnCrimson}>
               <span className="text-base">🏈</span> Touchdown
             </button>
 
-            <button onClick={() => setModal({ type: 'casualty', step: 1, attackTeam: null, attackerId: null, victimId: null, result: null })}
+            <button onClick={() => setModal({ type: 'casualty', step: 0, eventTurn: null, attackTeam: null, attackerId: null, victimId: null, result: null })}
               className={btnCrimson}>
               <span className="text-base">💀</span> Casualty
             </button>
 
-            <button onClick={() => setModal({ type: 'interception', step: 1, team: null, playerId: null })}
+            <button onClick={() => setModal({ type: 'interception', step: 0, eventTurn: null, team: null, playerId: null })}
               className={btnGhost + ' text-left'}>
               <span className="text-base">🖐</span> Interception
             </button>
@@ -789,9 +822,22 @@ export default function GameOnClient({ matchData }: Props) {
         {/* TD Modal */}
         {modal?.type === 'td' && (
           <ModalOverlay title="Record Touchdown" onClose={() => setModal(null)}>
+            {modal.step === 0 && (
+              <>
+                <p className="text-bb-muted text-sm">Which turn did the touchdown happen?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                    <button key={t} onClick={() => setModal({ ...modal, step: 1, eventTurn: t })}
+                      className="py-2 rounded-sm border border-bb-border text-sm font-heading font-bold text-white hover:border-bb-gold hover:bg-bb-gold/10 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {modal.step === 1 && (
               <>
-                <p className="text-bb-muted text-sm">Which team scored?</p>
+                <p className="text-bb-muted text-sm">Which team scored? <span className="text-bb-gold font-heading">T{modal.eventTurn}</span></p>
                 <div className="grid grid-cols-2 gap-3">
                   {(['home', 'away'] as const).map((side) => {
                     const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
@@ -804,6 +850,7 @@ export default function GameOnClient({ matchData }: Props) {
                     )
                   })}
                 </div>
+                <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
               </>
             )}
             {modal.step === 2 && modal.team && (
@@ -856,9 +903,22 @@ export default function GameOnClient({ matchData }: Props) {
         {/* Casualty Modal */}
         {modal?.type === 'casualty' && (
           <ModalOverlay title="Record Casualty" onClose={() => setModal(null)}>
+            {modal.step === 0 && (
+              <>
+                <p className="text-bb-muted text-sm">Which turn did the casualty happen?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                    <button key={t} onClick={() => setModal({ ...modal, step: 1, eventTurn: t })}
+                      className="py-2 rounded-sm border border-bb-border text-sm font-heading font-bold text-white hover:border-bb-crimson hover:bg-bb-crimson/10 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {modal.step === 1 && (
               <>
-                <p className="text-bb-muted text-sm">Which team caused the casualty?</p>
+                <p className="text-bb-muted text-sm">Which team caused the casualty? <span className="text-bb-gold font-heading">T{modal.eventTurn}</span></p>
                 <div className="grid grid-cols-2 gap-3">
                   {(['home', 'away'] as const).map((side) => {
                     const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
@@ -871,6 +931,7 @@ export default function GameOnClient({ matchData }: Props) {
                     )
                   })}
                 </div>
+                <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
               </>
             )}
             {modal.step === 2 && modal.attackTeam && (
@@ -953,9 +1014,22 @@ export default function GameOnClient({ matchData }: Props) {
         {/* Interception Modal */}
         {modal?.type === 'interception' && (
           <ModalOverlay title="Record Interception" onClose={() => setModal(null)}>
+            {modal.step === 0 && (
+              <>
+                <p className="text-bb-muted text-sm">Which turn did the interception happen?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                    <button key={t} onClick={() => setModal({ ...modal, step: 1, eventTurn: t })}
+                      className="py-2 rounded-sm border border-bb-border text-sm font-heading font-bold text-white hover:border-bb-gold/50 hover:bg-bb-gold/10 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             {modal.step === 1 && (
               <>
-                <p className="text-bb-muted text-sm">Which team made the interception?</p>
+                <p className="text-bb-muted text-sm">Which team made the interception? <span className="text-bb-gold font-heading">T{modal.eventTurn}</span></p>
                 <div className="grid grid-cols-2 gap-3">
                   {(['home', 'away'] as const).map((side) => {
                     const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
@@ -968,11 +1042,12 @@ export default function GameOnClient({ matchData }: Props) {
                     )
                   })}
                 </div>
+                <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
               </>
             )}
             {modal.step === 2 && modal.team && (
               <>
-                <p className="text-bb-muted text-sm">Who made the interception?</p>
+                <p className="text-bb-muted text-sm">Who made the interception? <span className="text-bb-gold font-heading">T{modal.eventTurn}</span></p>
                 <SelectPlayer
                   players={modal.team === 'home' ? homePlaying : awayPlaying}
                   value={modal.playerId ?? ''}

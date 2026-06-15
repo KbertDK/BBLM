@@ -22,7 +22,12 @@ export interface MatchSummary {
   scheduledAt: Date | null
   homeScore: number | null
   awayScore: number | null
-  recentEvents?: MatchEventSummary[]
+  recentEvents?:  MatchEventSummary[]
+  allEvents?:     MatchEventSummary[]
+  homeCasScore?:  number
+  awayCasScore?:  number
+  homeKillScore?: number
+  awayKillScore?: number
 }
 
 export interface MatchResult extends MatchSummary {

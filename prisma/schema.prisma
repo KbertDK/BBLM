@@ -7,6 +7,197 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model RuleSet {
+  id              String        @id @default(cuid())
+  name            String
+  startIncome     Int
+  gameType        GameType
+  status          RuleSetStatus @default(ACTIVE)
+  createdAt       DateTime      @default(now())
+  numberOfPlayers Int           @default(16)
+  pointsDraw      Int           @default(1)
+  pointsLoss      Int           @default(0)
+  pointsWin       Int           @default(3)
+  leagues         League[]
+}
+
+model League {
+  id             String       @id @default(cuid())
+  name           String
+  season         Int
+  isHidden       Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  status         LeagueStatus @default(READY)
+  ruleSetId      String?
+  divisions      Division[]
+  ruleSet        RuleSet?     @relation(fields: [ruleSetId], references: [id])
+  matches        Match[]
+  teams          Team[]
+  primaryCoaches Coach[]      @relation("CoachPrimaryLeague")
+}
+
+model Division {
+  id          String       @id @default(cuid())
+  name        String
+  leagueId    String
+  isHidden    Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  league      League       @relation(fields: [leagueId], references: [id])
+  teams       Team[]
+  tournaments Tournament[] @relation("DivisionToTournament")
+}
+
+model Tournament {
+  id            String     @id @default(cuid())
+  name          String
+  crossDivision Boolean    @default(false)
+  createdAt     DateTime   @default(now())
+  divisions     Division[] @relation("DivisionToTournament")
+}
+
+model Coach {
+  id              String     @id @default(cuid())
+  name            String
+  email           String     @unique
+  passwordHash    String?
+  role            CoachRole  @default(COACH)
+  createdAt       DateTime   @default(now())
+  isActive        Boolean    @default(true)
+  address         String?
+  alias           String?    @unique
+  city            String?
+  phone           String?
+  zip             String?
+  primaryLeagueId String?
+  newsPosts       NewsPost[]
+  teams           Team[]
+  primaryLeague   League?    @relation("CoachPrimaryLeague", fields: [primaryLeagueId], references: [id], onDelete: SetNull)
+}
+
+model Race {
+  id            String       @id @default(cuid())
+  name          String       @unique
+  rosterSource  String
+  rerollPrice   Int
+  hasApothecary Boolean
+  playerTypes   PlayerType[]
+  teams         Team[]
+}
+
+model PlayerType {
+  id              String       @id @default(cuid())
+  raceId          String
+  name            String
+  cost            Int
+  maxCount        Int
+  ma              Int
+  st              Int
+  ag              Int
+  av              Int
+  skillRollDouble String
+  skillRollNormal String
+  race            Race         @relation(fields: [raceId], references: [id])
+  teamPlayers     TeamPlayer[]
+  startingSkills  Skill[]      @relation("PlayerTypeToSkill")
+}
+
+model Skill {
+  id          String        @id @default(cuid())
+  skillId     Int           @unique
+  name        String        @unique
+  category    SkillCategory
+  skillRule   String
+  playerTypes PlayerType[]  @relation("PlayerTypeToSkill")
+}
+
+model Team {
+  id               String       @id @default(cuid())
+  name             String
+  raceId           String
+  coachId          String
+  leagueId         String
+  divisionId       String?
+  wins             Int          @default(0)
+  losses           Int          @default(0)
+  draws            Int          @default(0)
+  createdAt        DateTime     @default(now())
+  apothecary       Boolean      @default(false)
+  assistantCoaches Int          @default(0)
+  cheerleaders     Int          @default(0)
+  fanFactor        Int          @default(0)
+  rerolls          Int          @default(0)
+  treasury         Int          @default(0)
+  isActive         Boolean      @default(true)
+  awayMatches      Match[]      @relation("AwayTeam")
+  homeMatches      Match[]      @relation("HomeTeam")
+  coach            Coach        @relation(fields: [coachId], references: [id])
+  division         Division?    @relation(fields: [divisionId], references: [id])
+  league           League       @relation(fields: [leagueId], references: [id])
+  race             Race         @relation(fields: [raceId], references: [id])
+  players          TeamPlayer[]
+}
+
+model TeamPlayer {
+  id              String       @id @default(cuid())
+  teamId          String
+  playerTypeId    String
+  number          Int
+  createdAt       DateTime     @default(now())
+  casualties      Int          @default(0)
+  completePasses  Int          @default(0)
+  interceptions   Int          @default(0)
+  name            String?
+  status          PlayerStatus @default(ACTIVE)
+  touchdowns      Int          @default(0)
+  mvp             Int          @default(0)
+  niggling        String       @default("")
+  ssp             Int          @default(0)
+  value           Int          @default(0)
+  teamGamesAtSack Int?
+  playerType      PlayerType   @relation(fields: [playerTypeId], references: [id])
+  team            Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+model Match {
+  id          String       @id @default(cuid())
+  leagueId    String
+  homeTeamId  String
+  awayTeamId  String
+  scheduledAt DateTime?
+  status      MatchStatus  @default(SCHEDULED)
+  round       Int
+  homeScore   Int?
+  awayScore   Int?
+  createdAt   DateTime     @default(now())
+  awayTeam    Team         @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  homeTeam    Team         @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  league      League       @relation(fields: [leagueId], references: [id])
+  events      MatchEvent[]
+}
+
+model MatchEvent {
+  id          String   @id @default(cuid())
+  matchId     String
+  type        String
+  label       String
+  createdAt   DateTime @default(now())
+  scoringTeam String?
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+}
+
+model NewsPost {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  coachNote String   @default("")
+  playerId  String?
+  teamId    String?
+  author    Coach    @relation(fields: [authorId], references: [id])
+}
+
 enum CoachRole {
   ADMIN
   COMMISH
@@ -30,88 +221,6 @@ enum RuleSetStatus {
   INACTIVE
 }
 
-model RuleSet {
-  id              String        @id @default(cuid())
-  name            String
-  startIncome     Int
-  numberOfPlayers Int           @default(16)
-  gameType        GameType
-  pointsWin       Int           @default(3)
-  pointsDraw      Int           @default(1)
-  pointsLoss      Int           @default(0)
-  status          RuleSetStatus @default(ACTIVE)
-  leagues         League[]
-  createdAt       DateTime      @default(now())
-}
-
-model League {
-  id          String       @id @default(cuid())
-  name        String
-  season      Int
-  isHidden    Boolean      @default(false)
-  status      LeagueStatus @default(READY)
-  ruleSetId   String?
-  ruleSet     RuleSet?     @relation(fields: [ruleSetId], references: [id], onDelete: SetNull)
-  createdAt   DateTime     @default(now())
-  teams       Team[]
-  matches     Match[]
-  divisions   Division[]
-}
-
-model Division {
-  id        String   @id @default(cuid())
-  name      String
-  leagueId  String
-  league    League   @relation(fields: [leagueId], references: [id])
-  isHidden  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  teams     Team[]
-}
-
-model Coach {
-  id           String     @id @default(cuid())
-  name         String
-  alias        String?    @unique
-  email        String     @unique
-  phone        String?
-  address      String?
-  zip          String?
-  city         String?
-  passwordHash String?
-  role         CoachRole  @default(COACH)
-  isActive     Boolean    @default(true)
-  teams        Team[]
-  newsPosts    NewsPost[]
-  createdAt    DateTime   @default(now())
-}
-
-model Race {
-  id            String       @id @default(cuid())
-  name          String       @unique
-  rosterSource  String
-  rerollPrice   Int
-  hasApothecary Boolean
-  teams         Team[]
-  playerTypes   PlayerType[]
-}
-
-model PlayerType {
-  id              String  @id @default(cuid())
-  raceId          String
-  race            Race    @relation(fields: [raceId], references: [id])
-  name            String
-  cost            Int
-  maxCount        Int
-  ma              Int
-  st              Int
-  ag              Int
-  av              Int
-  skillRollDouble String
-  skillRollNormal String
-  startingSkills  Skill[]
-  teamPlayers     TeamPlayer[]
-}
-
 enum SkillCategory {
   G
   A
@@ -121,111 +230,15 @@ enum SkillCategory {
   E
 }
 
-model Skill {
-  id          String        @id @default(cuid())
-  skillId     Int           @unique
-  name        String        @unique
-  category    SkillCategory
-  skillRule   String
-  playerTypes PlayerType[]
-}
-
-model Team {
-  id          String    @id @default(cuid())
-  name        String
-  raceId      String
-  coachId     String
-  leagueId    String
-  divisionId  String?
-  race        Race      @relation(fields: [raceId], references: [id])
-  coach       Coach     @relation(fields: [coachId], references: [id])
-  league      League    @relation(fields: [leagueId], references: [id])
-  division    Division? @relation(fields: [divisionId], references: [id], onDelete: SetNull)
-  isActive    Boolean   @default(true)
-  homeMatches Match[]   @relation("HomeTeam")
-  awayMatches Match[]   @relation("AwayTeam")
-  wins             Int          @default(0)
-  losses           Int          @default(0)
-  draws            Int          @default(0)
-  treasury         Int          @default(0)
-  rerolls          Int          @default(0)
-  assistantCoaches Int          @default(0)
-  cheerleaders     Int          @default(0)
-  fanFactor        Int          @default(0)
-  apothecary       Boolean      @default(false)
-  players          TeamPlayer[]
-  createdAt        DateTime     @default(now())
-}
-
 enum PlayerStatus {
   ACTIVE
   MNG
-  SACKED
   DEAD
-}
-
-model TeamPlayer {
-  id             String       @id @default(cuid())
-  teamId         String
-  team           Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  playerTypeId   String
-  playerType     PlayerType   @relation(fields: [playerTypeId], references: [id])
-  number         Int
-  name           String?
-  status         PlayerStatus @default(ACTIVE)
-  completePasses Int          @default(0)
-  touchdowns     Int          @default(0)
-  interceptions  Int          @default(0)
-  casualties     Int          @default(0)
-  mvp            Int          @default(0)
-  ssp            Int          @default(0)
-  niggling        String       @default("")
-  value           Int          @default(0)
-  teamGamesAtSack Int?
-  createdAt       DateTime     @default(now())
-}
-
-model Match {
-  id          String       @id @default(cuid())
-  leagueId    String
-  league      League       @relation(fields: [leagueId], references: [id])
-  homeTeamId  String
-  awayTeamId  String
-  homeTeam    Team         @relation("HomeTeam", fields: [homeTeamId], references: [id])
-  awayTeam    Team         @relation("AwayTeam", fields: [awayTeamId], references: [id])
-  scheduledAt DateTime?
-  status      MatchStatus  @default(SCHEDULED)
-  round       Int
-  homeScore   Int?
-  awayScore   Int?
-  createdAt   DateTime     @default(now())
-  events      MatchEvent[]
-}
-
-model MatchEvent {
-  id        String   @id @default(cuid())
-  matchId   String
-  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  type      String
-  label     String
-  createdAt DateTime @default(now())
+  SACKED
 }
 
 enum MatchStatus {
   SCHEDULED
   LIVE
   COMPLETED
-}
-
-model NewsPost {
-  id        String   @id @default(cuid())
-  title     String
-  body      String
-  authorId  String
-  author    Coach    @relation(fields: [authorId], references: [id])
-  teamId    String?
-  playerId  String?
-  coachNote String   @default("")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 }

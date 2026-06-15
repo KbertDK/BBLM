@@ -37,10 +37,13 @@ export default async function ProfilePage() {
   const session = await getSession()
   if (!session) redirect('/auth/login')
 
-  const coach = await prisma.coach.findUnique({
-    where:  { id: session.coachId },
-    select: { name: true, alias: true, email: true, phone: true, address: true, zip: true, city: true },
-  })
+  const [coach, leagues] = await Promise.all([
+    prisma.coach.findUnique({
+      where:  { id: session.coachId },
+      select: { name: true, alias: true, email: true, phone: true, address: true, zip: true, city: true, primaryLeagueId: true },
+    }),
+    prisma.league.findMany({ where: { isHidden: false }, orderBy: { name: 'asc' }, select: { id: true, name: true, season: true } }),
+  ])
   if (!coach) redirect('/auth/login')
 
   return (
@@ -67,6 +70,21 @@ export default async function ProfilePage() {
               placeholder="e.g. GrimTusk_88"
               hint="Your public name — the only thing other coaches can see."
             />
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium uppercase tracking-widest text-bb-muted">
+                Primary League
+              </label>
+              <select
+                name="primaryLeagueId"
+                defaultValue={coach.primaryLeagueId ?? ''}
+                className={inputCls()}
+              >
+                <option value="">— None —</option>
+                {leagues.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name} (Season {l.season})</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Contact */}

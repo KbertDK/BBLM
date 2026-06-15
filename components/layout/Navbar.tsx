@@ -47,6 +47,14 @@ export default async function Navbar() {
                 League Management
               </Link>
             )}
+            {session?.role === 'ADMIN' && (
+              <Link
+                href="/data-manager"
+                className="px-4 py-2 text-sm font-body text-bb-crimson-bright hover:text-white hover:bg-bb-crimson/20 rounded-sm transition-colors tracking-wide uppercase text-xs font-medium"
+              >
+                Data Manager
+              </Link>
+            )}
           </nav>
 
           <div className="hidden md:flex items-center gap-3">

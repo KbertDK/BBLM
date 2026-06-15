@@ -76,6 +76,19 @@ export async function resetCoachPassword(formData: FormData) {
   revalidatePath(REVALIDATE)
 }
 
+export async function setCoachRole(formData: FormData) {
+  const adminId = await requireAdmin()
+  if (!adminId) return
+
+  const id   = formData.get('id')   as string
+  const role = formData.get('role') as string
+  if (id === adminId) return // cannot change your own role
+  if (!VALID_ROLES.includes(role)) return
+
+  await prisma.coach.update({ where: { id }, data: { role: role as CoachRole } })
+  revalidatePath(REVALIDATE)
+}
+
 export async function toggleCoachActive(formData: FormData) {
   const adminId = await requireAdmin()
   if (!adminId) return
@@ -101,5 +114,16 @@ export async function deleteCoach(formData: FormData) {
   if (teamCount > 0) return // blocked — coach still has teams
 
   await prisma.coach.delete({ where: { id } })
+  revalidatePath(REVALIDATE)
+}
+
+export async function setCoachPrimaryLeague(formData: FormData) {
+  const adminId = await requireAdmin()
+  if (!adminId) return
+
+  const id              = formData.get('id')              as string
+  const primaryLeagueId = (formData.get('primaryLeagueId') as string) || null
+
+  await prisma.coach.update({ where: { id }, data: { primaryLeagueId } })
   revalidatePath(REVALIDATE)
 }
