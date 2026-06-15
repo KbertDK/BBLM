@@ -58,7 +58,11 @@ export default async function TeamPage({ params, searchParams }: Props) {
 
   const playerValue = living.reduce((sum, p) => sum + (p.value > 0 ? p.value : p.playerType.cost), 0)
   const rerollValue = team.rerolls * team.race.rerollPrice
-  const teamValue   = Math.round((playerValue + rerollValue) / 1000)
+  const staffValue  = team.assistantCoaches * 10000
+                    + team.cheerleaders     * 10000
+                    + team.fanFactor        * 10000
+                    + (team.apothecary      ? 50000 : 0)
+  const teamValue   = Math.round((playerValue + rerollValue + staffValue) / 1000)
 
   return (
     <div className="min-h-screen bg-bb-navy">

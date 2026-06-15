@@ -13,6 +13,12 @@ export async function createTeam(formData: FormData) {
   const leagueId  =  formData.get('leagueId') as string
   const rosterRaw = formData.get('roster')    as string
 
+  const rerolls          = Math.min(8,  Math.max(0, parseInt((formData.get('rerolls')          as string) ?? '0', 10) || 0))
+  const assistantCoaches = Math.min(12, Math.max(0, parseInt((formData.get('assistantCoaches') as string) ?? '0', 10) || 0))
+  const cheerleaders     = Math.min(12, Math.max(0, parseInt((formData.get('cheerleaders')     as string) ?? '0', 10) || 0))
+  const fanFactor        = Math.min(99, Math.max(0, parseInt((formData.get('fanFactor')        as string) ?? '0', 10) || 0))
+  const apothecaryReq    = formData.get('apothecary') === 'true'
+
   if (!name || !raceId || !leagueId || !rosterRaw) return
 
   let roster: { playerTypeId: string; count: number }[]
@@ -23,12 +29,20 @@ export async function createTeam(formData: FormData) {
   }
   if (!Array.isArray(roster) || roster.length === 0) return
 
-  // Server-side re-validation against the league's rule set
-  const league = await prisma.league.findUnique({
-    where: { id: leagueId },
-    include: { ruleSet: { select: { startIncome: true, numberOfPlayers: true, status: true } } },
-  })
-  if (!league?.ruleSet || league.ruleSet.status !== 'ACTIVE') return
+  // Server-side re-validation against the league's rule set and race
+  const [league, race] = await Promise.all([
+    prisma.league.findUnique({
+      where: { id: leagueId },
+      include: { ruleSet: { select: { startIncome: true, numberOfPlayers: true, status: true } } },
+    }),
+    prisma.race.findUnique({
+      where: { id: raceId },
+      select: { rerollPrice: true, hasApothecary: true },
+    }),
+  ])
+  if (!league?.ruleSet || league.ruleSet.status !== 'ACTIVE' || !race) return
+
+  const apothecary = apothecaryReq && race.hasApothecary
 
   const ids     = roster.map((r) => r.playerTypeId)
   const types   = await prisma.playerType.findMany({
@@ -50,8 +64,14 @@ export async function createTeam(formData: FormData) {
     for (let i = 0; i < count; i++) playerRows.push({ playerTypeId, number: num++, value: pt.cost })
   }
 
-  if (totalCost > league.ruleSet.startIncome)     return
-  if (totalPlayers > league.ruleSet.numberOfPlayers) return
+  const staffCost = rerolls * race.rerollPrice
+                  + assistantCoaches * 10000
+                  + cheerleaders     * 10000
+                  + fanFactor        * 10000
+                  + (apothecary      ? 50000 : 0)
+
+  if (totalCost + staffCost > league.ruleSet.startIncome) return
+  if (totalPlayers > league.ruleSet.numberOfPlayers)      return
 
   const team = await prisma.team.create({
     data: {
@@ -59,6 +79,11 @@ export async function createTeam(formData: FormData) {
       raceId,
       coachId:  session.coachId,
       leagueId,
+      rerolls,
+      assistantCoaches,
+      cheerleaders,
+      fanFactor,
+      apothecary,
       players:  { create: playerRows },
     },
   })

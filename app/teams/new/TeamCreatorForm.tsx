@@ -6,7 +6,7 @@ import { createTeam } from './actions'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type RaceOption = { id: string; name: string }
+type RaceOption = { id: string; name: string; rerollPrice: number; hasApothecary: boolean }
 
 type RuleSetInfo = {
   name: string
@@ -64,31 +64,91 @@ function fmt(n: number) {
   return n.toLocaleString('en')
 }
 
+function StaffRow({
+  label, price, count, max, remaining, onAdd, onRemove,
+}: {
+  label: string; price: number; count: number; max: number
+  remaining: number; onAdd: () => void; onRemove: () => void
+}) {
+  const canAdd = count < max && remaining >= price
+  const canSub = count > 0
+  return (
+    <div className="flex items-center justify-between py-2.5 border-b border-bb-border/30 last:border-0">
+      <div className="flex items-center gap-3 min-w-0">
+        <span className="text-sm text-white font-medium">{label}</span>
+        <span className="text-bb-muted text-xs">{fmt(price)} gp / each</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {count > 0 && (
+          <span className="text-xs text-bb-muted/50 w-24 text-right">{fmt(count * price)} gp</span>
+        )}
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={!canSub}
+          className="w-6 h-6 flex items-center justify-center border border-bb-border text-bb-muted rounded-sm hover:border-bb-muted hover:text-white transition-colors disabled:opacity-25 disabled:cursor-not-allowed text-sm font-bold"
+        >
+          −
+        </button>
+        <span className="text-sm font-heading font-bold text-white w-6 text-center">{count}</span>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={!canAdd}
+          className="w-6 h-6 flex items-center justify-center border border-bb-border text-bb-muted rounded-sm hover:border-bb-gold hover:text-bb-gold transition-colors disabled:opacity-25 disabled:cursor-not-allowed text-sm font-bold"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function TeamCreatorForm({ races, leagues, playerTypes, preselectedRaceId }: Props) {
   const router = useRouter()
 
-  const [leagueId,  setLeagueId]  = useState('')
-  const [teamName,  setTeamName]  = useState('')
-  const [roster,    setRoster]    = useState<Record<string, number>>({})
+  const [leagueId,          setLeagueId]          = useState('')
+  const [teamName,          setTeamName]          = useState('')
+  const [roster,            setRoster]            = useState<Record<string, number>>({})
+  const [rerolls,           setRerolls]           = useState(0)
+  const [assistantCoaches,  setAssistantCoaches]  = useState(0)
+  const [cheerleaders,      setCheerleaders]      = useState(0)
+  const [fanFactor,         setFanFactor]         = useState(0)
+  const [apothecary,        setApothecary]        = useState(false)
 
   // Reset roster whenever race changes (navigating reloads the component anyway,
   // but guard against stale state on client-side race switch)
+  const resetStaff = () => {
+    setRerolls(0); setAssistantCoaches(0); setCheerleaders(0); setFanFactor(0); setApothecary(false)
+  }
+
   const handleRaceChange = (raceId: string) => {
     setRoster({})
+    resetStaff()
     router.push(raceId ? `/teams/new?raceId=${raceId}` : '/teams/new')
   }
 
   const handleLeagueChange = (id: string) => {
     setLeagueId(id)
-    setRoster({}) // reset roster when league (and thus budget) changes
+    setRoster({})
+    resetStaff()
   }
 
   const selectedLeague = leagues.find((l) => l.id === leagueId)
   const ruleSet        = selectedLeague?.ruleSet
+  const selectedRace   = races.find((r) => r.id === preselectedRaceId)
+  const rerollPrice    = selectedRace?.rerollPrice ?? 0
+  const hasApo         = selectedRace?.hasApothecary ?? false
 
-  const spent        = playerTypes.reduce((s, pt) => s + (roster[pt.id] ?? 0) * pt.cost, 0)
+  const playerCost   = playerTypes.reduce((s, pt) => s + (roster[pt.id] ?? 0) * pt.cost, 0)
+  const staffCost    = rerolls          * rerollPrice
+                     + assistantCoaches * 10000
+                     + cheerleaders     * 10000
+                     + fanFactor        * 10000
+                     + (apothecary      ? 50000 : 0)
+  const spent        = playerCost + staffCost
   const totalPlayers = Object.values(roster).reduce((a, b) => a + b, 0)
   const remaining    = ruleSet ? ruleSet.startIncome - spent : 0
   const maxPlayers   = ruleSet?.numberOfPlayers ?? 0
@@ -193,6 +253,30 @@ export function TeamCreatorForm({ races, leagues, playerTypes, preselectedRaceId
           </div>
         </div>
 
+        {/* ── Sticky budget bar ── */}
+        {hasRace && hasLeague && (
+          <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 bg-bb-darker/95 backdrop-blur-sm border-b border-bb-border px-4 sm:px-6 lg:px-8 py-3 space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-bb-muted uppercase tracking-widest">Remaining budget</span>
+              <span className={remaining < 0 ? 'text-bb-crimson-bright font-bold' : 'text-bb-gold font-bold'}>
+                {fmt(remaining)} / {fmt(ruleSet!.startIncome)} gp
+              </span>
+            </div>
+            <div className="h-1 bg-bb-navy rounded-full overflow-hidden">
+              <div
+                className="h-full bg-bb-gold rounded-full transition-all duration-200"
+                style={{ width: `${pctSpent}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-xs text-bb-muted">
+              <span>{fmt(spent)} gp spent</span>
+              <span className={totalPlayers >= maxPlayers ? 'text-bb-crimson-bright font-bold' : ''}>
+                {totalPlayers} / {maxPlayers} players
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* ── Step 2: Roster ── */}
         {!hasRace && (
           <div className="bg-bb-dark border border-bb-border rounded-sm p-6 text-center">
@@ -211,28 +295,6 @@ export function TeamCreatorForm({ races, leagues, playerTypes, preselectedRaceId
             <h2 className="font-heading text-sm font-bold text-bb-gold tracking-widest uppercase">
               2 · Hire Players
             </h2>
-
-            {/* Budget bar */}
-            <div className="bg-bb-dark border border-bb-border rounded-sm p-4 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-bb-muted uppercase tracking-widest">Remaining budget</span>
-                <span className={remaining < 0 ? 'text-bb-crimson-bright font-bold' : 'text-bb-gold font-bold'}>
-                  {fmt(remaining)} / {fmt(ruleSet!.startIncome)} gp
-                </span>
-              </div>
-              <div className="h-1.5 bg-bb-darker rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-bb-gold rounded-full transition-all duration-200"
-                  style={{ width: `${pctSpent}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between text-xs text-bb-muted">
-                <span>{fmt(spent)} gp spent</span>
-                <span className={totalPlayers >= maxPlayers ? 'text-bb-crimson-bright font-bold' : ''}>
-                  {totalPlayers} / {maxPlayers} players
-                </span>
-              </div>
-            </div>
 
             {/* Player type table */}
             <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-xl shadow-black/40">
@@ -321,13 +383,97 @@ export function TeamCreatorForm({ races, leagues, playerTypes, preselectedRaceId
           </div>
         )}
 
+        {/* ── Step 3: Staff ── */}
+        {hasRace && hasLeague && (
+          <div className="bg-bb-dark border border-bb-border rounded-sm p-6 space-y-1">
+            <h2 className="font-heading text-sm font-bold text-bb-gold tracking-widest uppercase mb-4">
+              3 · Team Staff
+            </h2>
+
+            <StaffRow
+              label="Re-Rolls"
+              price={rerollPrice}
+              count={rerolls}
+              max={8}
+              remaining={remaining}
+              onAdd={() => setRerolls((r) => Math.min(8, r + 1))}
+              onRemove={() => setRerolls((r) => Math.max(0, r - 1))}
+            />
+            <StaffRow
+              label="Assistant Coaches"
+              price={10000}
+              count={assistantCoaches}
+              max={12}
+              remaining={remaining}
+              onAdd={() => setAssistantCoaches((c) => Math.min(12, c + 1))}
+              onRemove={() => setAssistantCoaches((c) => Math.max(0, c - 1))}
+            />
+            <StaffRow
+              label="Cheerleaders"
+              price={10000}
+              count={cheerleaders}
+              max={12}
+              remaining={remaining}
+              onAdd={() => setCheerleaders((c) => Math.min(12, c + 1))}
+              onRemove={() => setCheerleaders((c) => Math.max(0, c - 1))}
+            />
+            <StaffRow
+              label="Fan Factor"
+              price={10000}
+              count={fanFactor}
+              max={99}
+              remaining={remaining}
+              onAdd={() => setFanFactor((f) => f + 1)}
+              onRemove={() => setFanFactor((f) => Math.max(0, f - 1))}
+            />
+
+            {/* Apothecary — only for races that support it */}
+            {hasApo ? (
+              <div className="flex items-center justify-between py-2.5">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-white font-medium">Apothecary</span>
+                  <span className="text-bb-muted text-xs">50,000 gp</span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={apothecary}
+                    onChange={(e) => {
+                      if (e.target.checked && remaining < 50000) return
+                      setApothecary(e.target.checked)
+                    }}
+                    disabled={!apothecary && remaining < 50000}
+                    className="accent-bb-gold w-4 h-4 disabled:opacity-40"
+                  />
+                  <span className={apothecary ? 'text-green-400 text-sm font-semibold' : 'text-bb-muted/50 text-sm'}>
+                    {apothecary ? 'Hired — 50,000 gp' : 'Not hired'}
+                  </span>
+                </label>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between py-2.5 opacity-35">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-white font-medium">Apothecary</span>
+                  <span className="text-bb-muted text-xs">Not available for this race</span>
+                </div>
+                <span className="text-bb-muted text-sm">N/A</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Submit ── */}
         {hasRace && hasLeague && (
           <form action={createTeam}>
-            <input type="hidden" name="name"      value={teamName} />
-            <input type="hidden" name="raceId"    value={preselectedRaceId ?? ''} />
-            <input type="hidden" name="leagueId"  value={leagueId} />
-            <input type="hidden" name="roster"    value={rosterJson} />
+            <input type="hidden" name="name"             value={teamName} />
+            <input type="hidden" name="raceId"           value={preselectedRaceId ?? ''} />
+            <input type="hidden" name="leagueId"         value={leagueId} />
+            <input type="hidden" name="roster"           value={rosterJson} />
+            <input type="hidden" name="rerolls"          value={rerolls} />
+            <input type="hidden" name="assistantCoaches" value={assistantCoaches} />
+            <input type="hidden" name="cheerleaders"     value={cheerleaders} />
+            <input type="hidden" name="fanFactor"        value={fanFactor} />
+            <input type="hidden" name="apothecary"       value={apothecary ? 'true' : 'false'} />
             <button
               type="submit"
               disabled={!canSubmit}
