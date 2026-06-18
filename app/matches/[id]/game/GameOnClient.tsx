@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
-import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData } from './actions'
+import { useRouter } from 'next/navigation'
+import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc } from './actions'
 import { getRaceLogo } from '@/lib/race-logo'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -12,6 +13,18 @@ type CasualtyResult = 'KO' | 'BH' | 'MNG' | 'DEAD'
 export interface MatchSkill {
   name: string
   rule: string
+}
+
+export interface MercPlayerType {
+  id:       string
+  name:     string
+  cost:     number
+  mercCost: number
+  ma:       number
+  st:       number
+  ag:       number
+  av:       number
+  skills:   MatchSkill[]
 }
 
 export interface MatchPlayer {
@@ -26,6 +39,8 @@ export interface MatchPlayer {
   av:             number
   ssp:            number
   skills:         MatchSkill[]
+  isMerc?:        boolean
+  mercCost?:      number
 }
 
 export interface MatchTeamData {
@@ -37,11 +52,20 @@ export interface MatchTeamData {
 }
 
 export interface MatchData {
-  id:       string
-  status:   'SCHEDULED' | 'LIVE'
-  round:    number
-  homeTeam: MatchTeamData
-  awayTeam: MatchTeamData
+  id:                string
+  status:            'SCHEDULED' | 'LIVE'
+  round:             number
+  wizardDone:        boolean
+  homeTeamValue:     number
+  awayTeamValue:     number
+  homeTeamTreasury:  number
+  awayTeamTreasury:  number
+  homeTeamFanFactor: number
+  awayTeamFanFactor: number
+  homePlayerTypes:   MercPlayerType[]
+  awayPlayerTypes:   MercPlayerType[]
+  homeTeam:          MatchTeamData
+  awayTeam:          MatchTeamData
 }
 
 interface MatchEvent {
@@ -120,6 +144,7 @@ function computePlayerUpdates(
 ): PlayerUpdate[] {
   const { events, lineup, mvp, injuryOverrides } = state
   const lineupSet = new Set([...lineup.home, ...lineup.away])
+  allPlayers = allPlayers.filter((p) => !p.isMerc)
   const mvpSet    = new Set([mvp.home, mvp.away].filter(Boolean) as string[])
 
   // Worst casualty result per victim
@@ -358,6 +383,17 @@ export default function GameOnClient({ matchData }: Props) {
   const [hydrated, setHydrated] = useState(false)
   const [rosterSide, setRosterSide] = useState<'home' | 'away' | null>(null)
 
+  const router = useRouter()
+
+  type WizardStep = 'petty-gold' | 'inducements' | 'done'
+  const [wizardStep,     setWizardStep]     = useState<WizardStep>(
+    matchData.status !== 'SCHEDULED' || matchData.wizardDone ? 'done' : 'petty-gold'
+  )
+  const [homePettyGold,  setHomePettyGold]  = useState(0)
+  const [awayPettyGold,  setAwayPettyGold]  = useState(0)
+  const [wizardPending,  startWizardTransition] = useTransition()
+  const [mercPending,    startMercTransition]   = useTransition()
+
   // Restore from localStorage after mount
   useEffect(() => {
     const saved = localStorage.getItem(`match-${matchData.id}`)
@@ -472,6 +508,7 @@ export default function GameOnClient({ matchData }: Props) {
 
   function handleComplete() {
     const playerUpdates = computePlayerUpdates(state, allPlayers)
+    const mercIds       = allPlayers.filter((p) => p.isMerc).map((p) => p.id)
     const fd = new FormData()
     fd.set('payload', JSON.stringify({
       matchId:      matchData.id,
@@ -480,6 +517,7 @@ export default function GameOnClient({ matchData }: Props) {
       homeWinnings: state.winnings.home,
       awayWinnings: state.winnings.away,
       playerUpdates,
+      mercIds,
       events:       state.events.map((e) => ({ type: e.type, label: e.label })),
     }))
     localStorage.removeItem(`match-${matchData.id}`)
@@ -585,6 +623,303 @@ export default function GameOnClient({ matchData }: Props) {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // PHASE 1 — PRE-MATCH WIZARD
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (state.phase === 'prematch' && wizardStep !== 'done') {
+    const homeBase = matchData.homeTeamValue + homePettyGold / 1000
+    const awayBase = matchData.awayTeamValue + awayPettyGold / 1000
+    const diff         = Math.abs(homeBase - awayBase)
+    const inducementGp = Math.round(diff * 1000)
+    const receivingTeam: 'home' | 'away' | null =
+      homeBase < awayBase ? 'home' : awayBase < homeBase ? 'away' : null
+
+    function handleWizardConfirm() {
+      startWizardTransition(async () => {
+        await savePrematchData(matchData.id, {
+          homeTeamValue:     matchData.homeTeamValue,
+          awayTeamValue:     matchData.awayTeamValue,
+          homeTeamFanFactor: matchData.homeTeamFanFactor,
+          awayTeamFanFactor: matchData.awayTeamFanFactor,
+        })
+        setWizardStep('done')
+      })
+    }
+
+    return (
+      <div className="min-h-screen bg-bb-darker text-white flex flex-col">
+        {/* Header */}
+        <div className="bg-bb-dark border-b border-bb-border px-6 py-4">
+          <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
+          <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Wizard</h1>
+          <div className="flex gap-2 mt-3">
+            {(['petty-gold', 'inducements'] as const).map((s, i) => (
+              <div key={s} className="flex items-center gap-2">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-heading font-bold border ${
+                  wizardStep === s
+                    ? 'bg-bb-gold border-bb-gold text-bb-dark'
+                    : 'border-bb-border text-bb-muted'
+                }`}>{i + 1}</div>
+                <span className={`text-xs font-heading uppercase tracking-wider ${wizardStep === s ? 'text-bb-gold' : 'text-bb-muted'}`}>
+                  {s === 'petty-gold' ? 'Petty Gold' : 'Inducements'}
+                </span>
+                {i === 0 && <span className="text-bb-border text-xs">›</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Step 1: Petty Gold */}
+        {wizardStep === 'petty-gold' && (
+          <div className="flex-1 flex flex-col p-6">
+            <p className="text-sm text-bb-muted mb-6">
+              Coaches may spend gold from their treasury as Petty Cash before inducements are calculated.
+            </p>
+            <div className="grid grid-cols-2 gap-4 flex-1">
+              {(['home', 'away'] as const).map((side) => {
+                const teamName = side === 'home' ? matchData.homeTeam.name  : matchData.awayTeam.name
+                const tv       = side === 'home' ? matchData.homeTeamValue  : matchData.awayTeamValue
+                const treasury = side === 'home' ? matchData.homeTeamTreasury : matchData.awayTeamTreasury
+                const petty    = side === 'home' ? homePettyGold : awayPettyGold
+                const setPetty = side === 'home' ? setHomePettyGold : setAwayPettyGold
+                const logo     = side === 'home' ? homeLogo : awayLogo
+                const overMax  = petty > treasury
+
+                return (
+                  <div key={side} className={`bg-bb-dark border rounded-sm p-5 flex flex-col gap-4 ${overMax ? 'border-bb-crimson' : 'border-bb-border'}`}>
+                    <div className="flex items-center gap-3">
+                      {logo && <img src={logo} alt={teamName} className="w-10 h-10 object-contain opacity-80 shrink-0" />}
+                      <div>
+                        <h2 className="font-heading text-lg font-bold text-bb-gold leading-tight">{teamName}</h2>
+                        <p className="text-xs text-bb-muted">{side === 'home' ? 'Home' : 'Away'}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-bb-muted font-heading uppercase tracking-wider">Team Value</span>
+                        <span className="text-white font-mono">{tv}k</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-bb-muted font-heading uppercase tracking-wider">Fan Factor</span>
+                        <span className="text-white font-mono">{side === 'home' ? matchData.homeTeamFanFactor : matchData.awayTeamFanFactor}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-bb-muted font-heading uppercase tracking-wider">Treasury</span>
+                        <span className="text-white font-mono">{treasury.toLocaleString()} gp</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-heading uppercase tracking-wider text-bb-muted mb-1.5">
+                        Petty Gold (gp)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={treasury}
+                        step={1000}
+                        value={petty}
+                        onChange={(e) => setPetty(Math.max(0, parseInt(e.target.value) || 0))}
+                        className={`w-full bg-bb-darker border rounded-sm px-3 py-2 text-sm text-white focus:outline-none font-mono ${
+                          overMax ? 'border-bb-crimson focus:border-bb-crimson' : 'border-bb-border focus:border-bb-gold'
+                        }`}
+                      />
+                      {overMax && (
+                        <p className="text-xs text-bb-crimson mt-1">Cannot exceed treasury ({treasury.toLocaleString()} gp)</p>
+                      )}
+                      {!overMax && petty > 0 && (
+                        <p className="text-xs text-bb-muted/70 mt-1">Remaining: {(treasury - petty).toLocaleString()} gp</p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex justify-end pt-6">
+              <button
+                onClick={() => setWizardStep('inducements')}
+                disabled={homePettyGold > matchData.homeTeamTreasury || awayPettyGold > matchData.awayTeamTreasury}
+                className="px-8 py-3 bg-bb-gold hover:bg-bb-gold-dim text-bb-dark font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Inducements + Merc Basket */}
+        {wizardStep === 'inducements' && (() => {
+          const receivingPlayerTypes = receivingTeam === 'home' ? matchData.homePlayerTypes : receivingTeam === 'away' ? matchData.awayPlayerTypes : []
+          const receivingTeamName    = receivingTeam === 'home' ? matchData.homeTeam.name : receivingTeam === 'away' ? matchData.awayTeam.name : ''
+          const receivingTV          = receivingTeam === 'home' ? matchData.homeTeamValue  : matchData.awayTeamValue
+          const hiredMercs           = (receivingTeam === 'home' ? matchData.homeTeam.players : matchData.awayTeam.players).filter((p) => p.isMerc)
+          const spent                = hiredMercs.reduce((s, p) => s + (p.mercCost ?? 0), 0)
+          const remaining            = inducementGp - spent
+          const mercBaseValue        = hiredMercs.reduce((s, p) => s + ((p.mercCost ?? 0) - 50000), 0)
+          const effectiveTV          = receivingTV + mercBaseValue / 1000
+
+          return (
+            <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+              {/* TV summary bar */}
+              <div className="grid grid-cols-2 gap-3 shrink-0">
+                {(['home', 'away'] as const).map((side) => {
+                  const tv     = side === 'home' ? matchData.homeTeamValue : matchData.awayTeamValue
+                  const petty  = side === 'home' ? homePettyGold : awayPettyGold
+                  const base   = side === 'home' ? homeBase : awayBase
+                  const isRcvr = receivingTeam === side
+                  return (
+                    <div key={side} className={`rounded-sm p-3 border text-sm ${isRcvr ? 'border-bb-crimson/50 bg-bb-crimson/5' : 'border-bb-border/40 bg-bb-darker'}`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-heading text-xs font-bold text-bb-gold">{side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name}</span>
+                        {isRcvr && <span className="text-[10px] font-heading text-bb-crimson border border-bb-crimson/40 px-1.5 py-0.5 rounded-sm">RECEIVES</span>}
+                      </div>
+                      <span className="font-mono text-bb-muted text-xs">
+                        {tv}k{petty > 0 ? ` + ${(petty/1000).toFixed(1)}k` : ''} = <span className="text-bb-gold font-bold">{base.toFixed(1)}k</span>
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {receivingTeam === null ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center">
+                    <p className="font-heading text-xl text-bb-gold">⚖ Matched — No Inducements</p>
+                    <p className="text-xs text-bb-muted mt-2">Both teams have equal base values. No inducement gold available.</p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Budget banner */}
+                  <div className="bg-bb-dark border border-bb-border rounded-sm px-4 py-2.5 flex items-center justify-between shrink-0">
+                    <div>
+                      <span className="text-xs text-bb-muted font-heading uppercase tracking-wider">Inducement Budget — </span>
+                      <span className="text-xs text-white font-heading">{receivingTeamName}</span>
+                    </div>
+                    <div className="flex gap-4 text-xs font-mono">
+                      <span className="text-bb-muted">Budget: <span className="text-white">{inducementGp.toLocaleString()}</span></span>
+                      <span className="text-bb-muted">Spent: <span className="text-bb-crimson">{spent.toLocaleString()}</span></span>
+                      <span className="text-bb-muted">Left: <span className={remaining < 0 ? 'text-bb-crimson' : 'text-bb-gold'}>{remaining.toLocaleString()}</span></span>
+                    </div>
+                  </div>
+
+                  {/* Pricelist + Basket */}
+                  <div className="flex-1 grid grid-cols-[55%_45%] gap-3 overflow-hidden min-h-0">
+                    {/* Pricelist */}
+                    <div className="bg-bb-dark border border-bb-border rounded-sm flex flex-col overflow-hidden">
+                      <div className="px-4 py-2 border-b border-bb-border shrink-0">
+                        <span className="text-xs font-heading uppercase tracking-wider text-bb-gold">Mercs Available — {receivingTeamName}</span>
+                      </div>
+                      <div className="overflow-y-auto flex-1 divide-y divide-bb-border/30">
+                        {receivingPlayerTypes.map((pt) => {
+                          const affordable = pt.mercCost <= remaining
+                          return (
+                            <div key={pt.id} className={`px-4 py-3 ${!affordable ? 'opacity-40' : ''}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white font-heading leading-tight">{pt.name}</p>
+                                  <p className="font-mono text-[11px] text-bb-muted mt-0.5">
+                                    MA{pt.ma} ST{pt.st} AG{pt.ag} AV{pt.av}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {pt.skills.map((sk) => (
+                                      <span key={sk.name} className={`text-[10px] px-1.5 py-0.5 rounded-sm border font-heading ${
+                                        sk.name === 'Loner'
+                                          ? 'bg-bb-crimson/20 border-bb-crimson/50 text-bb-crimson'
+                                          : 'bg-bb-border/30 border-bb-border text-bb-muted'
+                                      }`}>{sk.name}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <p className="font-mono text-xs text-white">{pt.mercCost.toLocaleString()}</p>
+                                  <p className="font-mono text-[10px] text-bb-muted">gp</p>
+                                  <button
+                                    disabled={!affordable || mercPending}
+                                    onClick={() => startMercTransition(async () => {
+                                      await hireMerc(matchData.id, receivingTeam!, pt.id, pt.mercCost)
+                                      router.refresh()
+                                    })}
+                                    className="mt-1.5 px-2.5 py-1 text-[11px] font-heading uppercase tracking-wider rounded-sm border border-bb-gold/60 text-bb-gold hover:bg-bb-gold hover:text-bb-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  >+</button>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Basket */}
+                    <div className="bg-bb-dark border border-bb-border rounded-sm flex flex-col overflow-hidden">
+                      <div className="px-4 py-2 border-b border-bb-border shrink-0">
+                        <span className="text-xs font-heading uppercase tracking-wider text-bb-gold">Basket</span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto divide-y divide-bb-border/30">
+                        {hiredMercs.length === 0 && (
+                          <p className="text-bb-muted text-xs italic px-4 py-4">No mercs hired yet.</p>
+                        )}
+                        {hiredMercs.map((m) => (
+                          <div key={m.id} className="flex items-center justify-between px-4 py-2.5 gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-white truncate">{m.playerTypeName}</p>
+                              <p className="font-mono text-[11px] text-bb-muted">{(m.mercCost ?? 0).toLocaleString()} gp</p>
+                            </div>
+                            <button
+                              disabled={mercPending}
+                              onClick={() => startMercTransition(async () => {
+                                await removeMerc(matchData.id, m.id)
+                                router.refresh()
+                              })}
+                              className="shrink-0 w-6 h-6 flex items-center justify-center text-bb-muted hover:text-bb-crimson transition-colors rounded-sm text-sm"
+                            >✕</button>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Basket totals */}
+                      <div className="border-t border-bb-border px-4 py-3 space-y-1 shrink-0">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-bb-muted font-heading uppercase tracking-wider">Total spent</span>
+                          <span className="font-mono text-white">{spent.toLocaleString()} gp</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-bb-muted font-heading uppercase tracking-wider">Remaining</span>
+                          <span className={`font-mono font-bold ${remaining < 0 ? 'text-bb-crimson' : 'text-bb-gold'}`}>{remaining.toLocaleString()} gp</span>
+                        </div>
+                        <div className="flex justify-between text-xs pt-1 border-t border-bb-border/40">
+                          <span className="text-bb-muted font-heading uppercase tracking-wider">Effective TV</span>
+                          <span className="font-mono text-white">
+                            {receivingTV}k → <span className="text-bb-gold">{effectiveTV.toFixed(1)}k</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex justify-between shrink-0">
+                <button
+                  onClick={() => setWizardStep('petty-gold')}
+                  className="px-6 py-3 border border-bb-border text-bb-muted hover:text-white hover:border-bb-muted rounded-sm font-heading tracking-widest uppercase text-sm transition-colors"
+                >
+                  ← Back
+                </button>
+                <button
+                  onClick={handleWizardConfirm}
+                  disabled={wizardPending || remaining < 0}
+                  className="px-8 py-3 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-50"
+                >
+                  {wizardPending ? 'Saving…' : 'Confirm & Continue →'}
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+      </div>
+    )
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // PHASE 1 — PRE-MATCH
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -644,7 +979,10 @@ export default function GameOnClient({ matchData }: Props) {
                         onChange={() => togglePlayer(side, p.id)}
                         className="accent-bb-crimson w-4 h-4 shrink-0"
                       />
-                      <span className="text-sm text-bb-muted w-6 font-heading">#{p.number}</span>
+                      {p.isMerc
+                        ? <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-700/40 px-1.5 py-0.5 rounded-sm font-heading shrink-0">MERC</span>
+                        : <span className="text-sm text-bb-muted w-6 font-heading shrink-0">#{p.number}</span>
+                      }
                       <span className="text-sm text-white flex-1">{p.name ?? p.playerTypeName}</span>
                       <span className="text-xs text-bb-muted/60 italic">{p.playerTypeName}</span>
                       {p.status === 'MNG' && (

@@ -32,49 +32,54 @@ export default async function GameOnPage({ params }: PageProps) {
   const { id } = await params
   const session = await getSession()
 
-  const match = await prisma.match.findUnique({
-    where: { id },
-    include: {
-      homeTeam: {
-        select: {
-          id:               true,
-          name:             true,
-          coachId:          true,
-          treasury:         true,
-          fanFactor:        true,
-          rerolls:          true,
-          assistantCoaches: true,
-          cheerleaders:     true,
-          apothecary:       true,
-          race:             { select: { name: true, rerollPrice: true } },
-          players: {
-            where:   { status: { in: ['ACTIVE', 'MNG'] } },
-            select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
-            orderBy: { number: 'asc' },
+  const [match, lonerSkill] = await Promise.all([
+    prisma.match.findUnique({
+      where: { id },
+      include: {
+        homeTeam: {
+          select: {
+            id:               true,
+            name:             true,
+            coachId:          true,
+            raceId:           true,
+            treasury:         true,
+            fanFactor:        true,
+            rerolls:          true,
+            assistantCoaches: true,
+            cheerleaders:     true,
+            apothecary:       true,
+            race:             { select: { name: true, rerollPrice: true } },
+            players: {
+              where:   { status: { in: ['ACTIVE', 'MNG'] } },
+              select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
+              orderBy: { number: 'asc' },
+            },
+          },
+        },
+        awayTeam: {
+          select: {
+            id:               true,
+            name:             true,
+            coachId:          true,
+            raceId:           true,
+            treasury:         true,
+            fanFactor:        true,
+            rerolls:          true,
+            assistantCoaches: true,
+            cheerleaders:     true,
+            apothecary:       true,
+            race:             { select: { name: true, rerollPrice: true } },
+            players: {
+              where:   { status: { in: ['ACTIVE', 'MNG'] } },
+              select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
+              orderBy: { number: 'asc' },
+            },
           },
         },
       },
-      awayTeam: {
-        select: {
-          id:               true,
-          name:             true,
-          coachId:          true,
-          treasury:         true,
-          fanFactor:        true,
-          rerolls:          true,
-          assistantCoaches: true,
-          cheerleaders:     true,
-          apothecary:       true,
-          race:             { select: { name: true, rerollPrice: true } },
-          players: {
-            where:   { status: { in: ['ACTIVE', 'MNG'] } },
-            select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
-            orderBy: { number: 'asc' },
-          },
-        },
-      },
-    },
-  })
+    }),
+    prisma.skill.findFirst({ where: { name: 'Loner' }, select: { skillRule: true } }),
+  ])
 
   if (!match) redirect('/')
 
@@ -103,53 +108,147 @@ export default async function GameOnPage({ params }: PageProps) {
     )
   }
 
+  // Parallel-fetch pricelist player types and existing mercs
+  const [homePlayerTypes, awayPlayerTypes, matchMercs] = await Promise.all([
+    prisma.playerType.findMany({
+      where:   { raceId: match.homeTeam.raceId },
+      orderBy: { cost: 'asc' },
+      include: { startingSkills: { select: { name: true, skillRule: true } } },
+    }),
+    prisma.playerType.findMany({
+      where:   { raceId: match.awayTeam.raceId },
+      orderBy: { cost: 'asc' },
+      include: { startingSkills: { select: { name: true, skillRule: true } } },
+    }),
+    prisma.matchMerc.findMany({
+      where:   { matchId: id },
+      include: { playerType: { include: { startingSkills: { select: { name: true, skillRule: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ])
+
+  const lonerEntry = {
+    name: 'Loner',
+    rule: lonerSkill?.skillRule ?? 'Must roll 4+ on a D6 before using a team re-roll. On a failure the re-roll is lost.',
+  }
+
+  function withLoner(skills: { name: string; rule: string }[]) {
+    return skills.some((s) => s.name === 'Loner') ? skills : [lonerEntry, ...skills]
+  }
+
+  // Synthesise merc MatchPlayer objects (use MatchMerc id as player id)
+  const homeMercPlayers = matchMercs
+    .filter((m) => m.side === 'home')
+    .map((m) => ({
+      id:             m.id,
+      number:         0,
+      name:           `Merc ${m.playerType.name}`,
+      status:         'ACTIVE' as const,
+      playerTypeName: m.playerType.name,
+      ma:             m.playerType.ma,
+      st:             m.playerType.st,
+      ag:             m.playerType.ag,
+      av:             m.playerType.av,
+      ssp:            0,
+      skills:         withLoner(m.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule }))),
+      isMerc:         true,
+      mercCost:       m.cost,
+    }))
+
+  const awayMercPlayers = matchMercs
+    .filter((m) => m.side === 'away')
+    .map((m) => ({
+      id:             m.id,
+      number:         0,
+      name:           `Merc ${m.playerType.name}`,
+      status:         'ACTIVE' as const,
+      playerTypeName: m.playerType.name,
+      ma:             m.playerType.ma,
+      st:             m.playerType.st,
+      ag:             m.playerType.ag,
+      av:             m.playerType.av,
+      ssp:            0,
+      skills:         withLoner(m.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule }))),
+      isMerc:         true,
+      mercCost:       m.cost,
+    }))
+
+  const mapPriceList = (pts: typeof homePlayerTypes) =>
+    pts.map((pt) => {
+      const skills = pt.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule }))
+      return {
+        id:       pt.id,
+        name:     pt.name,
+        cost:     pt.cost,
+        mercCost: pt.cost + 50000,
+        ma:       pt.ma,
+        st:       pt.st,
+        ag:       pt.ag,
+        av:       pt.av,
+        skills:   withLoner(skills),
+      }
+    })
+
+  const wizardDone = match.homeTeamValue !== null
+
   const matchData = {
     id:                match.id,
     status:            match.status as 'SCHEDULED' | 'LIVE',
     round:             match.round,
+    wizardDone,
     homeTeamValue:     computeTV(match.homeTeam),
     awayTeamValue:     computeTV(match.awayTeam),
     homeTeamTreasury:  match.homeTeam.treasury,
     awayTeamTreasury:  match.awayTeam.treasury,
     homeTeamFanFactor: match.homeTeam.fanFactor,
     awayTeamFanFactor: match.awayTeam.fanFactor,
+    homePlayerTypes:   mapPriceList(homePlayerTypes),
+    awayPlayerTypes:   mapPriceList(awayPlayerTypes),
     homeTeam: {
       id:       match.homeTeam.id,
       name:     match.homeTeam.name,
       coachId:  match.homeTeam.coachId,
       raceName: match.homeTeam.race.name,
-      players:  match.homeTeam.players.map((p) => ({
-        id:             p.id,
-        number:         p.number,
-        name:           p.name,
-        status:         p.status as 'ACTIVE' | 'MNG',
-        playerTypeName: p.playerType.name,
-        ma:             p.playerType.ma,
-        st:             p.playerType.st,
-        ag:             p.playerType.ag,
-        av:             p.playerType.av,
-        ssp:            p.ssp,
-        skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
-      })),
+      players: [
+        ...match.homeTeam.players.map((p) => ({
+          id:             p.id,
+          number:         p.number,
+          name:           p.name,
+          status:         p.status as 'ACTIVE' | 'MNG',
+          playerTypeName: p.playerType.name,
+          ma:             p.playerType.ma,
+          st:             p.playerType.st,
+          ag:             p.playerType.ag,
+          av:             p.playerType.av,
+          ssp:            p.ssp,
+          skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
+          isMerc:         false as const,
+        })),
+        ...homeMercPlayers,
+      ],
     },
     awayTeam: {
       id:       match.awayTeam.id,
       name:     match.awayTeam.name,
       coachId:  match.awayTeam.coachId,
       raceName: match.awayTeam.race.name,
-      players:  match.awayTeam.players.map((p) => ({
-        id:             p.id,
-        number:         p.number,
-        name:           p.name,
-        status:         p.status as 'ACTIVE' | 'MNG',
-        playerTypeName: p.playerType.name,
-        ma:             p.playerType.ma,
-        st:             p.playerType.st,
-        ag:             p.playerType.ag,
-        av:             p.playerType.av,
-        ssp:            p.ssp,
-        skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
-      })),
+      players: [
+        ...match.awayTeam.players.map((p) => ({
+          id:             p.id,
+          number:         p.number,
+          name:           p.name,
+          status:         p.status as 'ACTIVE' | 'MNG',
+          playerTypeName: p.playerType.name,
+          ma:             p.playerType.ma,
+          st:             p.playerType.st,
+          ag:             p.playerType.ag,
+          av:             p.playerType.av,
+          ssp:            p.ssp,
+          skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
+          isMerc:         false as const,
+        })),
+        ...awayMercPlayers,
+      ],
     },
   }
 

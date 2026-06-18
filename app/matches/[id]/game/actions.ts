@@ -74,6 +74,20 @@ export async function savePrematchData(matchId: string, data: {
   revalidatePath(`/matches/${matchId}/game`)
 }
 
+export async function hireMerc(matchId: string, side: 'home' | 'away', playerTypeId: string, cost: number) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  await prisma.matchMerc.create({ data: { matchId, side, playerTypeId, cost } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function removeMerc(matchId: string, mercId: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  await prisma.matchMerc.deleteMany({ where: { id: mercId, matchId } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
 export async function startMatch(matchId: string) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
@@ -112,6 +126,7 @@ interface CompletePayload {
   awayWinnings: number
   playerUpdates: PlayerUpdate[]
   events: EventRecord[]
+  mercIds: string[]
 }
 
 export async function completeMatchFull(formData: FormData) {
@@ -121,7 +136,8 @@ export async function completeMatchFull(formData: FormData) {
   let payload: CompletePayload
   try { payload = JSON.parse(raw) } catch { return }
 
-  const { matchId, homeScore, awayScore, homeWinnings, awayWinnings, playerUpdates, events = [] } = payload
+  const { matchId, homeScore, awayScore, homeWinnings, awayWinnings, events = [], mercIds = [] } = payload
+  const playerUpdates = (payload.playerUpdates ?? []).filter(u => !mercIds.includes(u.playerId))
 
   const session = await requireMatchParticipant(matchId)
   if (!session) return

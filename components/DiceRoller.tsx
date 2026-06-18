@@ -2,14 +2,14 @@
 
 import { useState, useCallback } from 'react'
 
+// Official 6-face Blood Bowl block die
 const BLOCK_FACES = [
-  '☠ Skull',
-  '↓ Att. Down',
-  '↕ Both Down',
+  '💀 Attacker Down',   // ×1 — turnover for the attacker
+  '↕ Both Down',        // ×1 — both fall (Block skill cancels for attacker)
+  '→ Push',             // ×2 — defender pushed back, no knockdown
   '→ Push',
-  '→ Push',
-  '~ Def. Stumbles',
-  '↓ Def. Down',
+  '~ Def. Stumbles',    // ×1 — defender falls unless they have Dodge
+  '⚡ Defender Down',   // ×1 — best result: defender knocked down
 ]
 
 function rollNumeric(sides: number, count = 1): string[] {
@@ -124,7 +124,13 @@ export default function DiceRoller() {
                     {result.map((v, i) => (
                       <span
                         key={i}
-                        className="font-heading font-black text-2xl text-bb-gold leading-none"
+                        className={`font-heading font-black text-xl leading-none ${
+                          v.includes('Attacker Down') || v.includes('Both Down')
+                            ? 'text-bb-crimson-bright'
+                            : v.includes('Defender Down')
+                            ? 'text-bb-gold'
+                            : 'text-white'
+                        }`}
                       >
                         {v}
                       </span>

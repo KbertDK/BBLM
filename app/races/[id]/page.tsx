@@ -6,7 +6,7 @@ import { getRaceLogo } from '@/lib/race-logo'
 export const revalidate = 300
 
 interface Props {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }
 
 const categoryLabel: Record<string, string> = {
@@ -35,7 +35,8 @@ const categoryColor: Record<string, string> = {
 }
 
 export default async function RaceDetailPage({ params }: Props) {
-  const race = await getRaceById(params.id)
+  const { id } = await params
+  const race = await getRaceById(id)
   if (!race) notFound()
 
   const raceLogo = getRaceLogo(race.name)
