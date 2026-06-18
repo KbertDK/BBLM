@@ -13,14 +13,15 @@ async function requireCommish() {
 export async function createMatch(formData: FormData) {
   if (!await requireCommish()) return
 
-  const leagueId   = formData.get('leagueId')   as string
-  const homeTeamId = formData.get('homeTeamId') as string
-  const awayTeamId = formData.get('awayTeamId') as string
-  const round      = parseInt((formData.get('round') as string) ?? '1', 10)
-  const rawDate    = (formData.get('scheduledAt') as string | null) ?? ''
-  const scheduledAt = rawDate ? new Date(rawDate) : null
+  const leagueId     = formData.get('leagueId')     as string
+  const tournamentId = (formData.get('tournamentId') as string) || null
+  const homeTeamId   = formData.get('homeTeamId')   as string
+  const awayTeamId   = formData.get('awayTeamId')   as string
+  const round        = parseInt((formData.get('round') as string) ?? '1', 10)
+  const rawDate      = (formData.get('scheduledAt') as string | null) ?? ''
+  const scheduledAt  = rawDate ? new Date(rawDate) : null
 
-  if (!leagueId || !homeTeamId || !awayTeamId || homeTeamId === awayTeamId) return
+  if (!leagueId || !tournamentId || !homeTeamId || !awayTeamId || homeTeamId === awayTeamId) return
   if (isNaN(round) || round < 1) return
   if (scheduledAt && isNaN(scheduledAt.getTime())) return
 
@@ -45,7 +46,7 @@ export async function createMatch(formData: FormData) {
   if (conflict) return
 
   await prisma.match.create({
-    data: { leagueId, homeTeamId, awayTeamId, round, scheduledAt, status: 'SCHEDULED' },
+    data: { leagueId, tournamentId, homeTeamId, awayTeamId, round, scheduledAt, status: 'SCHEDULED' },
   })
 
   revalidatePath('/league-management')
@@ -143,11 +144,12 @@ function circleRoundRobin(ids: string[]): [string, string][][] {
 export async function generateRoundRobin(formData: FormData) {
   if (!await requireCommish()) return
 
-  const leagueId   = formData.get('leagueId')   as string
-  const divisionId = formData.get('divisionId') as string
-  const startRound = parseInt((formData.get('startRound') as string) ?? '1', 10)
+  const leagueId     = formData.get('leagueId')     as string
+  const divisionId   = formData.get('divisionId')   as string
+  const tournamentId = (formData.get('tournamentId') as string) || null
+  const startRound   = parseInt((formData.get('startRound') as string) ?? '1', 10)
 
-  if (!leagueId || !divisionId || isNaN(startRound) || startRound < 1) return
+  if (!leagueId || !divisionId || !tournamentId || isNaN(startRound) || startRound < 1) return
 
   const divTeams = await prisma.team.findMany({
     where:   { leagueId, divisionId },
@@ -175,13 +177,13 @@ export async function generateRoundRobin(formData: FormData) {
     teamRounds.get(m.awayTeamId)!.add(m.round)
   }
 
-  const toCreate: { leagueId: string; homeTeamId: string; awayTeamId: string; round: number; status: 'SCHEDULED' }[] = []
+  const toCreate: { leagueId: string; tournamentId: string; homeTeamId: string; awayTeamId: string; round: number; status: 'SCHEDULED' }[] = []
 
   for (let ri = 0; ri < schedule.length; ri++) {
     const round = startRound + ri
     for (const [h, a] of schedule[ri]) {
       if (teamRounds.get(h)?.has(round) || teamRounds.get(a)?.has(round)) continue
-      toCreate.push({ leagueId, homeTeamId: h, awayTeamId: a, round, status: 'SCHEDULED' })
+      toCreate.push({ leagueId, tournamentId, homeTeamId: h, awayTeamId: a, round, status: 'SCHEDULED' })
     }
   }
 

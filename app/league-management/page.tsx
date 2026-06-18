@@ -176,6 +176,11 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
     ).values()
   )
 
+  const leagueDivisionIds = new Set(leagueDivisions.map((d) => d.id))
+  const leagueTournaments = tournaments
+    .filter((t) => t.divisions.some((d) => leagueDivisionIds.has(d.id)))
+    .map((t) => ({ id: t.id, name: t.name, divisionIds: t.divisions.map((d) => d.id) }))
+
   // Serialize matches for the client component (Date → ISO string)
   const serializedMatches = leagueMatches.map((m) => ({
     id:                   m.id,
@@ -684,6 +689,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
               leagueDivisions={leagueDivisions}
               leagueTeams={leagueTeams.map((t) => ({ id: t.id, name: t.name, divisionId: t.divisionId }))}
               matches={serializedMatches}
+              tournaments={leagueTournaments}
             />
           </section>
         )}

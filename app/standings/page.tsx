@@ -1,10 +1,12 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import prisma from '@/lib/prisma'
+import { getSession } from '@/lib/auth'
 import clsx from 'clsx'
 
 export const revalidate = 60
 
-type Props = { searchParams: Promise<{ leagueId?: string }> }
+type Props = { searchParams: Promise<{ leagueId?: string; divisionId?: string }> }
 
 const STATUS_CLS: Record<string, string> = {
   ACTIVE: 'text-bb-gold border-bb-gold/40 bg-bb-gold/5',
@@ -49,7 +51,12 @@ interface TeamRow {
   losses: number
   teamValue: number
   divisionId: string | null
-  divisionName: string | null
+}
+
+interface TournamentGroup {
+  id: string
+  name: string
+  teams: TeamRow[]
 }
 
 interface LeagueBlock {
@@ -60,134 +67,144 @@ interface LeagueBlock {
   pointsWin: number
   pointsDraw: number
   pointsLoss: number
-  teams: TeamRow[]
+  tournamentGroups: TournamentGroup[]
+  ungroupedTeams: TeamRow[]
 }
 
-function StandingsTable({ league }: { league: LeagueBlock }) {
-  const { pointsWin, pointsDraw, pointsLoss } = league
-
-  // Group teams by division
-  const divMap = new Map<string | null, { id: string | null; name: string | null; teams: TeamRow[] }>()
-
-  for (const t of league.teams) {
-    const key = t.divisionId
-    if (!divMap.has(key)) divMap.set(key, { id: t.divisionId, name: t.divisionName, teams: [] })
-    divMap.get(key)!.teams.push(t)
-  }
-
-  // Sort: named divisions first (alphabetically), undivided last
-  const groups = Array.from(divMap.values()).sort((a, b) => {
-    if (a.id === null) return 1
-    if (b.id === null) return -1
-    return (a.name ?? '').localeCompare(b.name ?? '')
-  })
-
+function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
+  teams: TeamRow[]
+  pointsWin: number
+  pointsDraw: number
+  pointsLoss: number
+}) {
   return (
-    <div className="flex flex-col gap-4">
-      {groups.map((group) => {
-        const sorted = sortTeams(group.teams, pointsWin, pointsDraw, pointsLoss)
+    <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden">
+      <div className="grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-4 py-2.5 gap-2">
+        <span className="text-center">#</span>
+        <span>Team</span>
+        <span>Coach</span>
+        <span>Race</span>
+        <span className="text-right" title="Team Value in thousands">TV</span>
+        <span className="text-center">W</span>
+        <span className="text-center">D</span>
+        <span className="text-center">L</span>
+        <span className="text-center">Pts</span>
+      </div>
+
+      {teams.length === 0 && (
+        <p className="text-bb-muted/50 text-sm italic px-4 py-4">No teams.</p>
+      )}
+
+      {teams.map((team, i) => {
+        const pts = team.wins * pointsWin + team.draws * pointsDraw + team.losses * pointsLoss
+        const isFirst = i === 0
         return (
-          <div key={group.id ?? '__none__'}>
-            {groups.length > 1 && (
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-xs font-heading tracking-widest uppercase text-bb-gold/70">
-                  {group.name ?? 'No Division'}
-                </span>
-                <div className="flex-1 h-px bg-bb-border/60" />
-              </div>
+          <Link
+            key={team.id}
+            href={`/teams/${team.id}`}
+            className={clsx(
+              'grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] items-center px-4 py-3 gap-2 border-b border-bb-border/60 last:border-0 transition-colors group',
+              isFirst ? 'hover:bg-bb-gold/8' : 'hover:bg-bb-gold/5',
             )}
-
-            <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden">
-              {/* Header */}
-              <div className="grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-4 py-2.5 gap-2">
-                <span className="text-center">#</span>
-                <span>Team</span>
-                <span>Coach</span>
-                <span>Race</span>
-                <span className="text-right" title="Team Value in thousands">TV</span>
-                <span className="text-center">W</span>
-                <span className="text-center">D</span>
-                <span className="text-center">L</span>
-                <span className="text-center">Pts</span>
-              </div>
-
-              {sorted.length === 0 && (
-                <p className="text-bb-muted/50 text-sm italic px-4 py-4">No teams in this division yet.</p>
-              )}
-
-              {sorted.map((team, i) => {
-                const pts = team.wins * pointsWin + team.draws * pointsDraw + team.losses * pointsLoss
-                const isFirst = i === 0
-
-                return (
-                  <Link
-                    key={team.id}
-                    href={`/teams/${team.id}`}
-                    className={clsx(
-                      'grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] items-center px-4 py-3 gap-2 border-b border-bb-border/60 last:border-0 transition-colors group',
-                      isFirst ? 'hover:bg-bb-gold/8' : 'hover:bg-bb-gold/5',
-                    )}
-                  >
-                    <div className="text-center">
-                      <RankMedal rank={i + 1} />
-                    </div>
-
-                    <div className="min-w-0">
-                      <span className={clsx(
-                        'font-heading font-bold text-sm leading-tight block truncate transition-colors group-hover:text-bb-gold',
-                        isFirst ? 'text-white' : 'text-white/85',
-                      )}>
-                        {team.name}
-                      </span>
-                    </div>
-
-                    <span className="text-xs text-bb-muted truncate">{team.coachName}</span>
-
-                    <span className="text-xs text-bb-muted/60 truncate">{team.race}</span>
-
-                    <span className="text-right font-heading font-bold text-sm text-bb-gold/80 tabular-nums" title="Team Value">
-                      {team.teamValue.toLocaleString()}
-                      <span className="text-bb-muted/50 font-normal text-xs ml-0.5">k</span>
-                    </span>
-
-                    <span className="text-center text-sm font-semibold text-green-400">{team.wins}</span>
-                    <span className="text-center text-sm text-bb-muted">{team.draws}</span>
-                    <span className="text-center text-sm text-bb-crimson-bright">{team.losses}</span>
-
-                    <span className={clsx(
-                      'text-center font-heading font-black text-base',
-                      isFirst ? 'text-bb-gold' : 'text-bb-gold/70',
-                    )}>
-                      {pts}
-                    </span>
-                  </Link>
-                )
-              })}
+          >
+            <div className="text-center"><RankMedal rank={i + 1} /></div>
+            <div className="min-w-0">
+              <span className={clsx(
+                'font-heading font-bold text-sm leading-tight block truncate transition-colors group-hover:text-bb-gold',
+                isFirst ? 'text-white' : 'text-white/85',
+              )}>
+                {team.name}
+              </span>
             </div>
-
-            {/* Points key */}
-            <p className="text-[10px] text-bb-muted/40 mt-1.5 text-right font-heading tracking-wide">
-              W={pointsWin} · D={pointsDraw} · L={pointsLoss} pts
-            </p>
-          </div>
+            <span className="text-xs text-bb-muted truncate">{team.coachName}</span>
+            <span className="text-xs text-bb-muted/60 truncate">{team.race}</span>
+            <span className="text-right font-heading font-bold text-sm text-bb-gold/80 tabular-nums" title="Team Value">
+              {team.teamValue.toLocaleString()}
+              <span className="text-bb-muted/50 font-normal text-xs ml-0.5">k</span>
+            </span>
+            <span className="text-center text-sm font-semibold text-green-400">{team.wins}</span>
+            <span className="text-center text-sm text-bb-muted">{team.draws}</span>
+            <span className="text-center text-sm text-bb-crimson-bright">{team.losses}</span>
+            <span className={clsx(
+              'text-center font-heading font-black text-base',
+              isFirst ? 'text-bb-gold' : 'text-bb-gold/70',
+            )}>
+              {pts}
+            </span>
+          </Link>
         )
       })}
     </div>
   )
 }
 
-export default async function StandingsPage({ searchParams }: Props) {
-  const { leagueId } = await searchParams
+function StandingsTable({ league }: { league: LeagueBlock }) {
+  const { pointsWin, pointsDraw, pointsLoss, tournamentGroups, ungroupedTeams } = league
+  const hasGroups = tournamentGroups.length > 0
 
-  // All non-hidden leagues for the filter UI
+  return (
+    <div className="flex flex-col gap-4">
+      {tournamentGroups.map((group) => {
+        const sorted = sortTeams(group.teams, pointsWin, pointsDraw, pointsLoss)
+        return (
+          <div key={group.id}>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-xs font-heading tracking-widest uppercase text-bb-gold/70">{group.name}</span>
+              <div className="flex-1 h-px bg-bb-border/60" />
+            </div>
+            <TeamTable teams={sorted} pointsWin={pointsWin} pointsDraw={pointsDraw} pointsLoss={pointsLoss} />
+            <p className="text-[10px] text-bb-muted/40 mt-1.5 text-right font-heading tracking-wide">
+              W={pointsWin} · D={pointsDraw} · L={pointsLoss} pts
+            </p>
+          </div>
+        )
+      })}
+
+      {ungroupedTeams.length > 0 && (
+        <div>
+          {hasGroups && (
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-xs font-heading tracking-widest uppercase text-bb-muted/50">Other</span>
+              <div className="flex-1 h-px bg-bb-border/60" />
+            </div>
+          )}
+          <TeamTable
+            teams={sortTeams(ungroupedTeams, pointsWin, pointsDraw, pointsLoss)}
+            pointsWin={pointsWin}
+            pointsDraw={pointsDraw}
+            pointsLoss={pointsLoss}
+          />
+          <p className="text-[10px] text-bb-muted/40 mt-1.5 text-right font-heading tracking-wide">
+            W={pointsWin} · D={pointsDraw} · L={pointsLoss} pts
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default async function StandingsPage({ searchParams }: Props) {
+  const { leagueId, divisionId } = await searchParams
+
+  // Default to the user's primary league when no league is selected
+  if (!leagueId) {
+    const session = await getSession()
+    if (session?.coachId) {
+      const coach = await prisma.coach.findUnique({
+        where:  { id: session.coachId },
+        select: { primaryLeagueId: true },
+      })
+      if (coach?.primaryLeagueId) {
+        redirect(`/standings?leagueId=${coach.primaryLeagueId}`)
+      }
+    }
+  }
+
   const allLeagues = await prisma.league.findMany({
-    where: { isHidden: false },
+    where:   { isHidden: false },
     orderBy: [{ status: 'asc' }, { season: 'desc' }, { name: 'asc' }],
-    select: {
-      id: true,
-      name: true,
-      season: true,
-      status: true,
+    select:  {
+      id: true, name: true, season: true, status: true,
       ruleSet: { select: { pointsWin: true, pointsDraw: true, pointsLoss: true } },
     },
   })
@@ -195,38 +212,47 @@ export default async function StandingsPage({ searchParams }: Props) {
   const activeLeagues = allLeagues.filter((l) => l.status === 'ACTIVE' || l.status === 'READY')
   const endedLeagues  = allLeagues.filter((l) => l.status === 'ENDED')
 
-  // Which leagues to show standings for
   const targetLeagues = leagueId
     ? allLeagues.filter((l) => l.id === leagueId)
     : activeLeagues
 
-  // Fetch teams for target leagues
-  const teams = targetLeagues.length > 0
-    ? await prisma.team.findMany({
-        where:   { leagueId: { in: targetLeagues.map((l) => l.id) } },
-        include: {
-          race:     { select: { name: true, rerollPrice: true } },
-          coach:    { select: { name: true, alias: true } },
-          division: { select: { id: true, name: true } },
-          players:  {
-            where:  { status: { in: ['ACTIVE', 'MNG'] } },
-            select: { value: true, playerType: { select: { cost: true } } },
-          },
-        },
+  // Divisions for the selected league — used for the division filter UI
+  const selectedLeagueDivisions = leagueId
+    ? await prisma.division.findMany({
+        where:   { leagueId, isHidden: false },
         orderBy: { name: 'asc' },
+        select:  { id: true, name: true },
       })
     : []
 
-  // Build league blocks
-  const leagueBlocks: LeagueBlock[] = targetLeagues.map((league) => ({
-    id:          league.id,
-    name:        league.name,
-    season:      league.season,
-    status:      league.status,
-    pointsWin:   league.ruleSet?.pointsWin  ?? 3,
-    pointsDraw:  league.ruleSet?.pointsDraw ?? 1,
-    pointsLoss:  league.ruleSet?.pointsLoss ?? 0,
-    teams: teams
+  const leagueIds = targetLeagues.map((l) => l.id)
+
+  // Prisma returns [] automatically when `in: []`, so no need to guard
+  const [teams, tournaments] = await Promise.all([
+    prisma.team.findMany({
+      where:   {
+        leagueId:            { in: leagueIds },
+        ...(divisionId ? { divisionId } : {}),
+      },
+      include: {
+        race:    { select: { name: true, rerollPrice: true } },
+        coach:   { select: { name: true, alias: true } },
+        players: {
+          where:  { status: { in: ['ACTIVE', 'MNG'] } },
+          select: { value: true, playerType: { select: { cost: true } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.tournament.findMany({
+      where:   { divisions: { some: { leagueId: { in: leagueIds } } } },
+      include: { divisions: { select: { id: true, leagueId: true } } },
+      orderBy: { name: 'asc' },
+    }),
+  ])
+
+  const leagueBlocks: LeagueBlock[] = targetLeagues.map((league) => {
+    const leagueTeams: TeamRow[] = teams
       .filter((t) => t.leagueId === league.id)
       .map((t) => {
         const playerValue = t.players.reduce((s, p) => s + (p.value > 0 ? p.value : p.playerType.cost), 0)
@@ -240,19 +266,50 @@ export default async function StandingsPage({ searchParams }: Props) {
           ) / 1000
         )
         return {
-          id:           t.id,
-          name:         t.name,
-          race:         t.race.name,
-          coachName:    t.coach.alias ?? t.coach.name,
-          wins:         t.wins,
-          draws:        t.draws,
-          losses:       t.losses,
+          id:         t.id,
+          name:       t.name,
+          race:       t.race.name,
+          coachName:  t.coach.alias ?? t.coach.name,
+          wins:       t.wins,
+          draws:      t.draws,
+          losses:     t.losses,
           teamValue,
-          divisionId:   t.divisionId,
-          divisionName: t.division?.name ?? null,
+          divisionId: t.divisionId,
         }
-      }),
-  }))
+      })
+
+    const leagueTournaments = tournaments.filter(
+      (t) => t.divisions.some((d) => d.leagueId === league.id)
+    )
+
+    const tournamentGroups: TournamentGroup[] = leagueTournaments.map((tournament) => {
+      const divisionIds = new Set(
+        tournament.divisions
+          .filter((d) => d.leagueId === league.id)
+          .map((d) => d.id)
+      )
+      return {
+        id:    tournament.id,
+        name:  tournament.name,
+        teams: leagueTeams.filter((t) => t.divisionId != null && divisionIds.has(t.divisionId)),
+      }
+    })
+
+    const assignedIds   = new Set(tournamentGroups.flatMap((g) => g.teams.map((t) => t.id)))
+    const ungroupedTeams = leagueTeams.filter((t) => !assignedIds.has(t.id))
+
+    return {
+      id:               league.id,
+      name:             league.name,
+      season:           league.season,
+      status:           league.status,
+      pointsWin:        league.ruleSet?.pointsWin  ?? 3,
+      pointsDraw:       league.ruleSet?.pointsDraw ?? 1,
+      pointsLoss:       league.ruleSet?.pointsLoss ?? 0,
+      tournamentGroups,
+      ungroupedTeams,
+    }
+  })
 
   const selectedLeague = leagueId ? allLeagues.find((l) => l.id === leagueId) : null
 
@@ -270,19 +327,16 @@ export default async function StandingsPage({ searchParams }: Props) {
             <div className="flex-1 h-px bg-gradient-to-l from-transparent to-bb-gold/60 max-w-32" />
           </div>
           <p className="text-bb-muted text-sm tracking-wide mt-1">
-            {selectedLeague
-              ? `${selectedLeague.name} — Season ${selectedLeague.season}`
-              : 'All ongoing leagues'}
+            {selectedLeague ? selectedLeague.name : 'All ongoing leagues'}
           </p>
         </div>
 
         {/* ── League filter pills ────────────────────────────────────── */}
         {allLeagues.length > 0 && (
-          <div className="mb-8">
-            {/* Active / Ready */}
+          <div className="mb-4">
             {activeLeagues.length > 0 && (
               <div className="mb-3">
-                <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Current Seasons</p>
+                <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Selected League</p>
                 <div className="flex flex-wrap gap-2">
                   <Link
                     href="/standings"
@@ -316,7 +370,6 @@ export default async function StandingsPage({ searchParams }: Props) {
               </div>
             )}
 
-            {/* Ended */}
             {endedLeagues.length > 0 && (
               <div>
                 <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Past Seasons</p>
@@ -341,6 +394,40 @@ export default async function StandingsPage({ searchParams }: Props) {
           </div>
         )}
 
+        {/* ── Division filter — shown when a league is selected ─────── */}
+        {leagueId && selectedLeagueDivisions.length > 0 && (
+          <div className="mb-8">
+            <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Division</p>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={`/standings?leagueId=${leagueId}`}
+                className={clsx(
+                  'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
+                  !divisionId
+                    ? 'bg-bb-gold/20 text-bb-gold border-bb-gold/50 font-bold'
+                    : 'border-bb-border/50 text-bb-muted hover:border-bb-gold/30 hover:text-bb-gold/70',
+                )}
+              >
+                All Divisions
+              </Link>
+              {selectedLeagueDivisions.map((d) => (
+                <Link
+                  key={d.id}
+                  href={`/standings?leagueId=${leagueId}&divisionId=${d.id}`}
+                  className={clsx(
+                    'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
+                    divisionId === d.id
+                      ? 'bg-bb-gold/20 text-bb-gold border-bb-gold/50 font-bold'
+                      : 'border-bb-border/50 text-bb-muted hover:border-bb-gold/30 hover:text-bb-gold/70',
+                  )}
+                >
+                  {d.name}
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── No leagues at all ──────────────────────────────────────── */}
         {allLeagues.length === 0 && (
           <div className="bg-bb-dark border border-bb-border rounded-sm p-10 text-center">
@@ -360,20 +447,16 @@ export default async function StandingsPage({ searchParams }: Props) {
         <div className="flex flex-col gap-10">
           {leagueBlocks.map((league) => (
             <section key={league.id}>
-              {/* League header — only shown when multiple leagues are visible */}
               {(leagueBlocks.length > 1 || leagueId) && (
                 <div className="flex items-center gap-3 mb-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="font-heading text-xl font-bold text-white tracking-wide">{league.name}</h2>
-                      <span className={clsx(
-                        'text-[10px] font-heading tracking-wider uppercase px-1.5 py-0.5 rounded-sm border',
-                        STATUS_CLS[league.status],
-                      )}>
-                        {STATUS_LABEL[league.status]}
-                      </span>
-                    </div>
-                    <p className="text-xs text-bb-muted mt-0.5">Season {league.season}</p>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-heading text-xl font-bold text-white tracking-wide">{league.name}</h2>
+                    <span className={clsx(
+                      'text-[10px] font-heading tracking-wider uppercase px-1.5 py-0.5 rounded-sm border',
+                      STATUS_CLS[league.status],
+                    )}>
+                      {STATUS_LABEL[league.status]}
+                    </span>
                   </div>
                   <div className="flex-1 h-px bg-bb-border ml-2" />
                   <Link
@@ -385,7 +468,7 @@ export default async function StandingsPage({ searchParams }: Props) {
                 </div>
               )}
 
-              {league.teams.length === 0 ? (
+              {league.tournamentGroups.length === 0 && league.ungroupedTeams.length === 0 ? (
                 <div className="bg-bb-dark border border-bb-border rounded-sm p-6 text-center">
                   <p className="text-bb-muted/50 text-sm italic">No teams assigned to this league yet.</p>
                 </div>
@@ -412,12 +495,9 @@ export default async function StandingsPage({ searchParams }: Props) {
                   href={`/standings?leagueId=${l.id}`}
                   className="flex items-center justify-between px-4 py-3 bg-bb-dark border border-bb-border/50 rounded-sm hover:border-bb-muted/40 hover:bg-bb-darker/60 transition-colors group"
                 >
-                  <div>
-                    <p className="font-heading font-bold text-bb-muted/80 group-hover:text-white text-sm transition-colors leading-tight">
-                      {l.name}
-                    </p>
-                    <p className="text-xs text-bb-muted/40 mt-0.5">Season {l.season}</p>
-                  </div>
+                  <p className="font-heading font-bold text-bb-muted/80 group-hover:text-white text-sm transition-colors leading-tight">
+                    {l.name}
+                  </p>
                   <span className="text-bb-muted/30 group-hover:text-bb-muted transition-colors text-sm">→</span>
                 </Link>
               ))}

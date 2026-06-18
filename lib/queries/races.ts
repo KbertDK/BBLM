@@ -7,6 +7,8 @@ export interface RaceSummary {
   rerollPrice: number
   hasApothecary: boolean
   teamCount: number
+  tier: string
+  tierDescription: string | null
 }
 
 export interface SkillRef {
@@ -40,12 +42,14 @@ export async function getAllRaces(): Promise<RaceSummary[]> {
     include: { _count: { select: { teams: true } } },
   })
   return races.map((r) => ({
-    id:            r.id,
-    name:          r.name,
-    rosterSource:  r.rosterSource,
-    rerollPrice:   r.rerollPrice,
-    hasApothecary: r.hasApothecary,
-    teamCount:     r._count.teams,
+    id:              r.id,
+    name:            r.name,
+    rosterSource:    r.rosterSource,
+    rerollPrice:     r.rerollPrice,
+    hasApothecary:   r.hasApothecary,
+    teamCount:       r._count.teams,
+    tier:            r.tier,
+    tierDescription: r.tierDescription,
   }))
 }
 
@@ -67,12 +71,14 @@ export async function getRaceById(id: string): Promise<RaceDetail | null> {
   })
   if (!race) return null
   return {
-    id:            race.id,
-    name:          race.name,
-    rosterSource:  race.rosterSource,
-    rerollPrice:   race.rerollPrice,
-    hasApothecary: race.hasApothecary,
-    teamCount:     race._count.teams,
+    id:              race.id,
+    name:            race.name,
+    rosterSource:    race.rosterSource,
+    rerollPrice:     race.rerollPrice,
+    hasApothecary:   race.hasApothecary,
+    teamCount:       race._count.teams,
+    tier:            race.tier,
+    tierDescription: race.tierDescription,
     playerTypes:   race.playerTypes.map((p) => ({
       id:              p.id,
       name:            p.name,

@@ -1,107 +1,61 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import prisma from '@/lib/prisma'
-import { TABLE_META } from '@/lib/data-manager-meta'
+import {
+  getDmmfModels, toPrismaKey, getScalarFields, buildResolvedMeta,
+} from '@/lib/data-manager-dmmf'
 import DataTable, { type SerializedRow } from './DataTable'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
 
-async function fetchRows(table: string, skip: number): Promise<{ rows: Record<string, unknown>[]; total: number }> {
-  const opts = { skip, take: PAGE_SIZE } as const
-  switch (table) {
-    case 'coach': {
-      const [raw, total] = await Promise.all([
-        prisma.coach.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.coach.count(),
-      ])
-      return { rows: raw.map(r => ({ ...r, passwordHash: '[hidden]' })), total }
-    }
-    case 'league': {
-      const [rows, total] = await Promise.all([
-        prisma.league.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.league.count(),
-      ])
-      return { rows, total }
-    }
-    case 'division': {
-      const [rows, total] = await Promise.all([
-        prisma.division.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.division.count(),
-      ])
-      return { rows, total }
-    }
-    case 'ruleSet': {
-      const [rows, total] = await Promise.all([
-        prisma.ruleSet.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.ruleSet.count(),
-      ])
-      return { rows, total }
-    }
-    case 'team': {
-      const [rows, total] = await Promise.all([
-        prisma.team.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.team.count(),
-      ])
-      return { rows, total }
-    }
-    case 'teamPlayer': {
-      const [rows, total] = await Promise.all([
-        prisma.teamPlayer.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.teamPlayer.count(),
-      ])
-      return { rows, total }
-    }
-    case 'match': {
-      const [rows, total] = await Promise.all([
-        prisma.match.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.match.count(),
-      ])
-      return { rows, total }
-    }
-    case 'matchEvent': {
-      const [rows, total] = await Promise.all([
-        prisma.matchEvent.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.matchEvent.count(),
-      ])
-      return { rows, total }
-    }
-    case 'race': {
-      const [rows, total] = await Promise.all([
-        prisma.race.findMany({ ...opts, orderBy: { name: 'asc' } }),
-        prisma.race.count(),
-      ])
-      return { rows, total }
-    }
-    case 'playerType': {
-      const [rows, total] = await Promise.all([
-        prisma.playerType.findMany({ ...opts, orderBy: { name: 'asc' } }),
-        prisma.playerType.count(),
-      ])
-      return { rows, total }
-    }
-    case 'skill': {
-      const [rows, total] = await Promise.all([
-        prisma.skill.findMany({ ...opts, orderBy: { skillId: 'asc' } }),
-        prisma.skill.count(),
-      ])
-      return { rows, total }
-    }
-    case 'newsPost': {
-      const [rows, total] = await Promise.all([
-        prisma.newsPost.findMany({ ...opts, orderBy: { createdAt: 'desc' } }),
-        prisma.newsPost.count(),
-      ])
-      return { rows, total }
-    }
-    default:
-      return { rows: [], total: 0 }
+async function fetchRows(
+  tableName: string,
+  skip: number,
+): Promise<{ rows: Record<string, unknown>[]; total: number }> {
+  const dmmfModel = getDmmfModels().find((m) => toPrismaKey(m.name) === tableName)
+  if (!dmmfModel) return { rows: [], total: 0 }
+
+  const delegate = (prisma as Record<string, any>)[tableName]
+  if (!delegate) return { rows: [], total: 0 }
+
+  const scalarFields = getScalarFields(dmmfModel.name)
+  const hasCreatedAt = scalarFields.some((f) => f.name === 'createdAt')
+  const hasName      = scalarFields.some((f) => f.name === 'name')
+  const orderBy = hasCreatedAt
+    ? { createdAt: 'desc' as const }
+    : hasName
+      ? { name: 'asc' as const }
+      : { id: 'asc' as const }
+
+  const [rows, total] = await Promise.all([
+    delegate.findMany({ skip, take: PAGE_SIZE, orderBy }),
+    delegate.count(),
+  ])
+
+  // Mask the password hash — never send it to the client
+  if (tableName === 'coach') {
+    for (const row of rows) delete row.passwordHash
   }
+
+  // Resolve mdMatchEventId → human-readable name for display
+  if (tableName === 'matchEvent') {
+    const mdEvents = await prisma.mdMatchEvent.findMany({ select: { id: true, name: true } })
+    const nameById = new Map<string, string>(mdEvents.map((e: { id: string; name: string }) => [e.id, e.name]))
+    for (const row of rows) {
+      const refId = row.mdMatchEventId as string | null
+      if (refId && nameById.has(refId)) {
+        row.mdMatchEventId = nameById.get(refId)!
+      }
+    }
+  }
+
+  return { rows, total }
 }
 
 function serializeRows(rows: Record<string, unknown>[]): SerializedRow[] {
-  return rows.map(row => {
+  return rows.map((row) => {
     const out: SerializedRow = {}
     for (const [k, v] of Object.entries(row)) {
       if (v === null || v === undefined) out[k] = null
@@ -113,18 +67,22 @@ function serializeRows(rows: Record<string, unknown>[]): SerializedRow[] {
 }
 
 interface Props {
-  params: { table: string }
-  searchParams?: { page?: string }
+  params: Promise<{ table: string }>
+  searchParams?: Promise<{ page?: string }>
 }
 
 export default async function TableDetailPage({ params, searchParams }: Props) {
-  const meta = TABLE_META.find(t => t.key === params.table)
+  const { table } = await params
+  const resolvedSP = await (searchParams ?? Promise.resolve<{ page?: string }>({}))
+  const pageParam  = resolvedSP.page
+
+  const meta = buildResolvedMeta(table)
   if (!meta) notFound()
 
-  const page = Math.max(1, parseInt(searchParams?.page ?? '1', 10))
-  const skip = (page - 1) * PAGE_SIZE
+  const page  = Math.max(1, parseInt(pageParam ?? '1', 10))
+  const skip  = (page - 1) * PAGE_SIZE
 
-  const { rows, total } = await fetchRows(params.table, skip)
+  const { rows, total } = await fetchRows(table, skip)
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const serialized = serializeRows(rows)
 
@@ -146,18 +104,13 @@ export default async function TableDetailPage({ params, searchParams }: Props) {
         </div>
         <p className="text-sm text-bb-muted mb-6">{meta.description}</p>
 
-        <DataTable
-          tableName={params.table}
-          meta={meta}
-          rows={serialized}
-          skip={skip}
-        />
+        <DataTable tableName={table} meta={meta} rows={serialized} skip={skip} />
 
         {totalPages > 1 && (
           <div className="mt-4 flex items-center justify-end gap-2">
             {page > 1 && (
               <Link
-                href={`/data-manager/${params.table}?page=${page - 1}`}
+                href={`/data-manager/${table}?page=${page - 1}`}
                 className="px-3 py-1 text-xs border border-bb-border text-bb-muted hover:text-bb-gold hover:border-bb-gold/40 rounded-sm transition-colors"
               >
                 ← Prev
@@ -166,7 +119,7 @@ export default async function TableDetailPage({ params, searchParams }: Props) {
             <span className="text-xs text-bb-muted">Page {page} of {totalPages}</span>
             {page < totalPages && (
               <Link
-                href={`/data-manager/${params.table}?page=${page + 1}`}
+                href={`/data-manager/${table}?page=${page + 1}`}
                 className="px-3 py-1 text-xs border border-bb-border text-bb-muted hover:text-bb-gold hover:border-bb-gold/40 rounded-sm transition-colors"
               >
                 Next →

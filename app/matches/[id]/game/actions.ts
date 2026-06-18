@@ -27,10 +27,25 @@ async function requireMatchParticipant(matchId: string) {
   return ok ? session : null
 }
 
+// Maps short game event codes to MdMatchEvent names for FK lookup
+const MD_EVENT_NAME: Record<string, string> = {
+  TD:            'Touch Down',
+  INTERCEPTION:  'Interception',
+  CASUALTY:      'Block',  // default cause; specific cause can be set manually via Data Manager
+}
+
+async function resolveMdMatchEventId(type: string): Promise<string | null> {
+  const name = MD_EVENT_NAME[type]
+  if (!name) return null
+  const found = await prisma.mdMatchEvent.findFirst({ where: { name }, select: { id: true } })
+  return found?.id ?? null
+}
+
 export async function pushMatchEvent(matchId: string, type: string, label: string, scoringTeam?: string) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
-  await prisma.matchEvent.create({ data: { matchId, type, label, scoringTeam: scoringTeam ?? null } })
+  const mdMatchEventId = await resolveMdMatchEventId(type)
+  await prisma.matchEvent.create({ data: { matchId, type, label, scoringTeam: scoringTeam ?? null, mdMatchEventId } })
   revalidatePath('/')
 }
 
@@ -45,6 +60,18 @@ export async function deleteLastMatchEvent(matchId: string) {
   if (!last) return
   await prisma.matchEvent.delete({ where: { id: last.id } })
   revalidatePath('/')
+}
+
+export async function savePrematchData(matchId: string, data: {
+  homeTeamValue:     number
+  awayTeamValue:     number
+  homeTeamFanFactor: number
+  awayTeamFanFactor: number
+}) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  await prisma.match.update({ where: { id: matchId }, data })
+  revalidatePath(`/matches/${matchId}/game`)
 }
 
 export async function startMatch(matchId: string) {
@@ -185,15 +212,30 @@ export async function completeMatchFull(formData: FormData) {
   // Sync the authoritative event log from the client — wipe any partially-saved
   // events and replace with the complete ordered list from local state.
   if (events.length > 0) {
+    // Bulk-resolve MdMatchEvent IDs for known event types
+    const uniqueTypes = [...new Set(events.map((e) => e.type).filter((t) => t in MD_EVENT_NAME))]
+    const mdRows = uniqueTypes.length
+      ? await prisma.mdMatchEvent.findMany({
+          where: { name: { in: uniqueTypes.map((t) => MD_EVENT_NAME[t]) } },
+          select: { id: true, name: true },
+        })
+      : []
+    const mdByName = new Map(mdRows.map((r: { id: string; name: string }) => [r.name, r.id]))
+    const getMdId = (type: string) => {
+      const name = MD_EVENT_NAME[type]
+      return name ? (mdByName.get(name) ?? null) : null
+    }
+
     const base = Date.now()
     await prisma.$transaction([
       prisma.matchEvent.deleteMany({ where: { matchId } }),
       prisma.matchEvent.createMany({
         data: events.map((e, i) => ({
           matchId,
-          type:      e.type,
-          label:     e.label,
-          createdAt: new Date(base + i),   // 1 ms apart preserves order
+          type:          e.type,
+          label:         e.label,
+          mdMatchEventId: getMdId(e.type),
+          createdAt:     new Date(base + i),   // 1 ms apart preserves order
         })),
       }),
     ])

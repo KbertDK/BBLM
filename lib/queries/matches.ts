@@ -6,9 +6,9 @@ const matchInclude = {
   awayTeam: { select: { id: true, name: true } },
 } as const
 
-export async function getUpcomingMatches(): Promise<MatchSummary[]> {
+export async function getUpcomingMatches(leagueId?: string): Promise<MatchSummary[]> {
   const matches = await prisma.match.findMany({
-    where: { status: 'SCHEDULED' },
+    where: { status: 'SCHEDULED', ...(leagueId ? { leagueId } : {}) },
     orderBy: { scheduledAt: 'asc' },
     take: 5,
     include: matchInclude,
@@ -25,9 +25,9 @@ export async function getUpcomingMatches(): Promise<MatchSummary[]> {
   }))
 }
 
-export async function getLiveMatches(): Promise<MatchSummary[]> {
+export async function getLiveMatches(leagueId?: string): Promise<MatchSummary[]> {
   const matches = await prisma.match.findMany({
-    where:   { status: 'LIVE' },
+    where:   { status: 'LIVE', ...(leagueId ? { leagueId } : {}) },
     orderBy: { scheduledAt: 'asc' },
     include: {
       ...matchInclude,
@@ -82,9 +82,9 @@ export async function getMatchReport(matchId: string) {
   })
 }
 
-export async function getLatestResults(): Promise<MatchResult[]> {
+export async function getLatestResults(leagueId?: string): Promise<MatchResult[]> {
   const matches = await prisma.match.findMany({
-    where: { status: 'COMPLETED' },
+    where: { status: 'COMPLETED', ...(leagueId ? { leagueId } : {}) },
     orderBy: { scheduledAt: 'desc' },
     take: 5,
     include: matchInclude,

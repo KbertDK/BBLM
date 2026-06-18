@@ -1,32 +1,28 @@
 import Link from 'next/link'
 import prisma from '@/lib/prisma'
-import { TABLE_META } from '@/lib/data-manager-meta'
+import { getDmmfModels, toPrismaKey, buildAllResolvedMeta } from '@/lib/data-manager-dmmf'
 
 export const dynamic = 'force-dynamic'
 
-async function getTableCounts() {
-  const [
-    coach, league, division, ruleSet, team, teamPlayer,
-    match, matchEvent, race, playerType, skill, newsPost,
-  ] = await Promise.all([
-    prisma.coach.count(),
-    prisma.league.count(),
-    prisma.division.count(),
-    prisma.ruleSet.count(),
-    prisma.team.count(),
-    prisma.teamPlayer.count(),
-    prisma.match.count(),
-    prisma.matchEvent.count(),
-    prisma.race.count(),
-    prisma.playerType.count(),
-    prisma.skill.count(),
-    prisma.newsPost.count(),
-  ])
-  return { coach, league, division, ruleSet, team, teamPlayer, match, matchEvent, race, playerType, skill, newsPost }
+async function getTableCounts(): Promise<Record<string, number>> {
+  const models = getDmmfModels()
+  const entries = await Promise.all(
+    models.map(async (m) => {
+      const key = toPrismaKey(m.name)
+      const count: number = await (prisma as Record<string, any>)[key].count()
+      return [key, count] as const
+    }),
+  )
+  return Object.fromEntries(entries)
 }
 
 export default async function DataManagerPage() {
-  const counts = await getTableCounts()
+  const [counts, allMeta] = await Promise.all([
+    getTableCounts(),
+    Promise.resolve(buildAllResolvedMeta()),
+  ])
+
+  const totalRows = Object.values(counts).reduce((s, n) => s + n, 0)
 
   return (
     <main className="min-h-screen bg-bb-dark py-10 px-4 sm:px-6 lg:px-8">
@@ -36,7 +32,7 @@ export default async function DataManagerPage() {
             Data Manager
           </h1>
           <p className="mt-1 text-sm text-bb-muted">
-            Overview of all database tables used in the application. Click a table name to browse its data.
+            Overview of all database tables. Click a table name to browse its data.
           </p>
         </div>
 
@@ -51,8 +47,8 @@ export default async function DataManagerPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-bb-gold/10">
-              {TABLE_META.map((table) => {
-                const count = counts[table.key as keyof typeof counts]
+              {allMeta.map((table) => {
+                const count = counts[table.key] ?? 0
                 return (
                   <tr key={table.key} className="bg-bb-dark hover:bg-bb-darker/60 transition-colors">
                     <td className="px-4 py-4 align-top">
@@ -70,10 +66,10 @@ export default async function DataManagerPage() {
                       <div className="flex flex-wrap gap-1">
                         {table.fields.map((f) => (
                           <span
-                            key={f}
+                            key={f.name}
                             className="inline-block font-mono text-xs px-1.5 py-0.5 rounded-sm bg-bb-gold/5 border border-bb-gold/15 text-bb-muted"
                           >
-                            {f}
+                            {f.name}
                           </span>
                         ))}
                       </div>
@@ -93,7 +89,7 @@ export default async function DataManagerPage() {
                   Total rows across all tables
                 </td>
                 <td className="px-4 py-3 text-right font-mono text-lg font-bold text-bb-gold tabular-nums">
-                  {Object.values(counts).reduce((sum, n) => sum + n, 0).toLocaleString()}
+                  {totalRows.toLocaleString()}
                 </td>
               </tr>
             </tfoot>

@@ -2,13 +2,13 @@
 
 import { useState, useTransition } from 'react'
 import { updateTableRow, deleteTableRow } from './actions'
-import type { TableMeta } from '@/lib/data-manager-meta'
+import type { ResolvedMeta, ResolvedField } from '@/lib/data-manager-meta'
 
 export type SerializedRow = Record<string, string | null>
 
 interface Props {
   tableName: string
-  meta: TableMeta
+  meta: ResolvedMeta
   rows: SerializedRow[]
   skip: number
 }
@@ -21,7 +21,6 @@ function formatDisplay(v: string | null): string {
   if (v === null || v === '') return '—'
   if (v === 'true') return 'Yes'
   if (v === 'false') return 'No'
-  // Detect ISO date strings
   if (/^\d{4}-\d{2}-\d{2}T/.test(v)) {
     try {
       return new Date(v).toLocaleString('da-DK', { dateStyle: 'short', timeStyle: 'short' })
@@ -33,16 +32,16 @@ function formatDisplay(v: string | null): string {
 }
 
 export default function DataTable({ tableName, meta, rows, skip }: Props) {
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editData, setEditData] = useState<Record<string, string>>({})
+  const [editingId,      setEditingId]      = useState<string | null>(null)
+  const [editData,       setEditData]       = useState<Record<string, string>>({})
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error,          setError]          = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
   function startEdit(row: SerializedRow) {
     const data: Record<string, string> = {}
     for (const f of meta.fields) {
-      data[f] = row[f] ?? ''
+      data[f.name] = row[f.name] ?? ''
     }
     setEditData(data)
     setEditingId(row.id as string)
@@ -58,15 +57,13 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
   function deleteRow(id: string) {
     startTransition(async () => {
       const result = await deleteTableRow(tableName, id)
-      if (result.error) {
-        setError(result.error)
-      }
+      if (result.error) setError(result.error)
       setConfirmDeleteId(null)
     })
   }
 
-  function setField(field: string, value: string) {
-    setEditData(d => ({ ...d, [field]: value }))
+  function setField(name: string, value: string) {
+    setEditData((d) => ({ ...d, [name]: value }))
   }
 
   function save(id: string) {
@@ -81,24 +78,23 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
     })
   }
 
-  function renderInput(field: string) {
-    const fm = meta.fieldMeta[field]
-    const type = fm?.type ?? 'text'
-    const value = editData[field] ?? ''
+  function renderInput(field: ResolvedField) {
+    const { name, type, options } = field
+    const value = editData[name] ?? ''
 
     switch (type) {
       case 'boolean':
         return (
-          <select value={value} onChange={e => setField(field, e.target.value)} className={selectCls}>
+          <select value={value} onChange={(e) => setField(name, e.target.value)} className={selectCls}>
             <option value="true">Yes</option>
             <option value="false">No</option>
           </select>
         )
       case 'select':
         return (
-          <select value={value} onChange={e => setField(field, e.target.value)} className={selectCls}>
+          <select value={value} onChange={(e) => setField(name, e.target.value)} className={selectCls}>
             <option value="">—</option>
-            {fm?.options?.map(o => <option key={o} value={o}>{o}</option>)}
+            {options?.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         )
       case 'number':
@@ -106,7 +102,7 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
           <input
             type="number"
             value={value}
-            onChange={e => setField(field, e.target.value)}
+            onChange={(e) => setField(name, e.target.value)}
             className={`${inputCls} w-24`}
           />
         )
@@ -114,7 +110,7 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
         return (
           <textarea
             value={value}
-            onChange={e => setField(field, e.target.value)}
+            onChange={(e) => setField(name, e.target.value)}
             rows={2}
             className={`${inputCls} min-w-[200px] resize-y`}
           />
@@ -124,7 +120,7 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
           <input
             type="datetime-local"
             value={value.slice(0, 16)}
-            onChange={e => setField(field, e.target.value)}
+            onChange={(e) => setField(name, e.target.value)}
             className={inputCls}
           />
         )
@@ -133,7 +129,7 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
           <input
             type="text"
             value={value}
-            onChange={e => setField(field, e.target.value)}
+            onChange={(e) => setField(name, e.target.value)}
             className={`${inputCls} min-w-[140px]`}
           />
         )
@@ -151,9 +147,9 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
         <thead>
           <tr className="bg-bb-darker border-b border-bb-gold/20">
             <th className="px-3 py-3 text-left text-xs font-heading uppercase tracking-widest text-bb-muted w-8">#</th>
-            {meta.fields.map(f => (
-              <th key={f} className="px-3 py-3 text-left text-xs font-heading uppercase tracking-widest text-bb-gold whitespace-nowrap">
-                {f}
+            {meta.fields.map((f) => (
+              <th key={f.name} className="px-3 py-3 text-left text-xs font-heading uppercase tracking-widest text-bb-gold whitespace-nowrap">
+                {f.name}
               </th>
             ))}
             <th className="px-3 py-3 w-28" />
@@ -178,23 +174,20 @@ export default function DataTable({ tableName, meta, rows, skip }: Props) {
                     {skip + i + 1}
                   </td>
 
-                  {meta.fields.map(f => {
-                    const isReadonly = meta.fieldMeta[f]?.readonly ?? false
-                    return (
-                      <td key={f} className="px-3 py-2 align-top">
-                        {isEditing && !isReadonly ? (
-                          renderInput(f)
-                        ) : (
-                          <span
-                            className={`font-mono block truncate max-w-[200px] ${isReadonly && isEditing ? 'text-bb-muted/40' : 'text-bb-muted'}`}
-                            title={row[f] ?? ''}
-                          >
-                            {formatDisplay(row[f])}
-                          </span>
-                        )}
-                      </td>
-                    )
-                  })}
+                  {meta.fields.map((f) => (
+                    <td key={f.name} className="px-3 py-2 align-top">
+                      {isEditing && !f.readonly ? (
+                        renderInput(f)
+                      ) : (
+                        <span
+                          className={`font-mono block truncate max-w-[200px] ${f.readonly && isEditing ? 'text-bb-muted/40' : 'text-bb-muted'}`}
+                          title={row[f.name] ?? ''}
+                        >
+                          {formatDisplay(row[f.name])}
+                        </span>
+                      )}
+                    </td>
+                  ))}
 
                   <td className="px-3 py-2 align-top whitespace-nowrap">
                     {isEditing ? (

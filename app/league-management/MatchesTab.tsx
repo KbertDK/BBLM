@@ -16,6 +16,7 @@ import {
 
 export interface League    { id: string; name: string; season: number }
 export interface Division  { id: string; name: string }
+export interface TournamentOption { id: string; name: string; divisionIds: string[] }
 export interface TeamOption { id: string; name: string; divisionId: string | null }
 export interface MatchRow {
   id: string
@@ -38,6 +39,7 @@ interface Props {
   leagueDivisions:   Division[]
   leagueTeams:       TeamOption[]
   matches:           MatchRow[]
+  tournaments:       TournamentOption[]
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -218,9 +220,11 @@ export default function MatchesTab({
   leagueDivisions,
   leagueTeams,
   matches,
+  tournaments,
 }: Props) {
   const router = useRouter()
   const [selectedMatchIds, setSelectedMatchIds] = useState<Set<string>>(new Set())
+  const [selectedTournamentId, setSelectedTournamentId] = useState<string>('')
 
   // Auto-select the single division when there's only one
   const effectiveDivisionId = leagueDivisions.length === 1
@@ -279,8 +283,9 @@ export default function MatchesTab({
     })
   }
 
-  const hasDivision = !!divisionId
-  const canSchedule = hasDivision && divisionTeams.length >= 2
+  const hasDivision    = !!divisionId
+  const hasTournament  = !!selectedTournamentId
+  const canSchedule    = hasDivision && hasTournament && divisionTeams.length >= 2
 
   return (
     <div className="space-y-6">
@@ -292,6 +297,7 @@ export default function MatchesTab({
             defaultValue={selectedLeagueId ?? ''}
             onChange={(e) => {
               const id = e.target.value
+              setSelectedTournamentId('')
               if (id) router.push(`/league-management?tab=matches&leagueId=${id}`)
               else router.push('/league-management?tab=matches')
             }}
@@ -323,9 +329,27 @@ export default function MatchesTab({
         )}
       </div>
 
+      {/* Tournament picker — required before creating matches */}
+      {selectedLeagueId && (
+        <select
+          value={selectedTournamentId}
+          onChange={(e) => setSelectedTournamentId(e.target.value)}
+          className={inputCls('w-full')}
+        >
+          <option value="">— Select a tournament —</option>
+          {tournaments.map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      )}
+
       {!selectedLeagueId ? (
         <div className="bg-bb-dark border border-bb-border rounded-sm px-6 py-10 text-center">
           <p className="text-bb-muted/50 text-sm italic">Select a league above to manage matches.</p>
+        </div>
+      ) : !hasTournament ? (
+        <div className="bg-bb-dark border border-bb-border rounded-sm px-6 py-10 text-center">
+          <p className="text-bb-muted/50 text-sm italic">Select a tournament above to manage matches.</p>
         </div>
       ) : !hasDivision ? (
         <div className="bg-bb-dark border border-bb-border rounded-sm px-6 py-10 text-center">
@@ -340,8 +364,9 @@ export default function MatchesTab({
               <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Generate Round Robin</span>
             </summary>
             <form action={generateRoundRobin} className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3">
-              <input type="hidden" name="leagueId"   value={selectedLeagueId} />
-              <input type="hidden" name="divisionId" value={divisionId} />
+              <input type="hidden" name="leagueId"      value={selectedLeagueId} />
+              <input type="hidden" name="divisionId"    value={divisionId} />
+              <input type="hidden" name="tournamentId"  value={selectedTournamentId} />
               {divisionTeams.length < 2 ? (
                 <p className="text-bb-crimson-bright text-xs">At least 2 teams must be in the division to generate a round robin.</p>
               ) : (
@@ -383,8 +408,9 @@ export default function MatchesTab({
               </p>
             ) : (
               <form action={createMatch} className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3">
-                <input type="hidden" name="leagueId"   value={selectedLeagueId} />
-                <input type="hidden" name="divisionId" value={divisionId} />
+                <input type="hidden" name="leagueId"     value={selectedLeagueId} />
+                <input type="hidden" name="divisionId"   value={divisionId} />
+                <input type="hidden" name="tournamentId" value={selectedTournamentId} />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <select name="homeTeamId" required className={inputCls()}>

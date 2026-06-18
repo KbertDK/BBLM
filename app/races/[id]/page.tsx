@@ -18,6 +18,13 @@ const categoryLabel: Record<string, string> = {
   E: 'Extraordinary',
 }
 
+const tierStyle: Record<string, string> = {
+  '1':   'text-bb-gold      border-bb-gold/40      bg-bb-gold/10',
+  '1.5': 'text-blue-400     border-blue-400/40     bg-blue-400/10',
+  '2':   'text-amber-400    border-amber-400/40    bg-amber-400/10',
+  '3':   'text-bb-crimson-bright border-bb-crimson-bright/40 bg-bb-crimson/10',
+}
+
 const categoryColor: Record<string, string> = {
   G: 'text-blue-300   border-blue-300/30   bg-blue-300/5',
   A: 'text-green-300  border-green-300/30  bg-green-300/5',
@@ -69,6 +76,14 @@ export default async function RaceDetailPage({ params }: Props) {
                 {race.hasApothecary ? 'Yes' : 'No'}
               </div>
             </div>
+            {/* Tier */}
+            <div className="bg-bb-dark border border-bb-border rounded-sm px-4 py-3">
+              <div className="text-bb-muted text-xs uppercase tracking-widest mb-1">Tier</div>
+              <span className={`text-sm font-heading font-bold px-2 py-0.5 rounded-sm border ${tierStyle[race.tier] ?? 'text-bb-muted border-bb-muted/30 bg-bb-muted/5'}`}>
+                Tier {race.tier}
+              </span>
+            </div>
+
             {race.teamCount > 0 && (
               <div className="bg-bb-dark border border-bb-border rounded-sm px-4 py-3">
                 <div className="text-bb-muted text-xs uppercase tracking-widest mb-0.5">Teams in League</div>
@@ -76,6 +91,12 @@ export default async function RaceDetailPage({ params }: Props) {
               </div>
             )}
           </div>
+          {race.tierDescription && (
+            <p className="mt-4 text-sm text-bb-muted/70 italic border-l-2 border-bb-gold/30 pl-3">
+              {race.tierDescription}
+            </p>
+          )}
+
           <div className="mt-5">
             <Link
               href={`/teams/new?raceId=${race.id}`}

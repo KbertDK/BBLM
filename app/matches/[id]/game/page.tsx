@@ -7,6 +7,27 @@ interface PageProps {
   params: Promise<{ id: string }>
 }
 
+function computeTV(team: {
+  players:          { value: number }[]
+  rerolls:          number
+  race:             { rerollPrice: number }
+  assistantCoaches: number
+  cheerleaders:     number
+  fanFactor:        number
+  apothecary:       boolean
+}) {
+  const playerValue = team.players.reduce((s, p) => s + p.value, 0)
+  return Math.round(
+    (playerValue +
+      team.rerolls          * team.race.rerollPrice +
+      team.assistantCoaches * 10000 +
+      team.cheerleaders     * 10000 +
+      team.fanFactor        * 10000 +
+      (team.apothecary ? 50000 : 0)) /
+    1000,
+  )
+}
+
 export default async function GameOnPage({ params }: PageProps) {
   const { id } = await params
   const session = await getSession()
@@ -16,26 +37,38 @@ export default async function GameOnPage({ params }: PageProps) {
     include: {
       homeTeam: {
         select: {
-          id:      true,
-          name:    true,
-          coachId: true,
-          race:    { select: { name: true } },
+          id:               true,
+          name:             true,
+          coachId:          true,
+          treasury:         true,
+          fanFactor:        true,
+          rerolls:          true,
+          assistantCoaches: true,
+          cheerleaders:     true,
+          apothecary:       true,
+          race:             { select: { name: true, rerollPrice: true } },
           players: {
             where:   { status: { in: ['ACTIVE', 'MNG'] } },
-            select:  { id: true, number: true, name: true, status: true, ssp: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
+            select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
             orderBy: { number: 'asc' },
           },
         },
       },
       awayTeam: {
         select: {
-          id:      true,
-          name:    true,
-          coachId: true,
-          race:    { select: { name: true } },
+          id:               true,
+          name:             true,
+          coachId:          true,
+          treasury:         true,
+          fanFactor:        true,
+          rerolls:          true,
+          assistantCoaches: true,
+          cheerleaders:     true,
+          apothecary:       true,
+          race:             { select: { name: true, rerollPrice: true } },
           players: {
             where:   { status: { in: ['ACTIVE', 'MNG'] } },
-            select:  { id: true, number: true, name: true, status: true, ssp: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
+            select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
             orderBy: { number: 'asc' },
           },
         },
@@ -71,9 +104,15 @@ export default async function GameOnPage({ params }: PageProps) {
   }
 
   const matchData = {
-    id:     match.id,
-    status: match.status as 'SCHEDULED' | 'LIVE',
-    round:  match.round,
+    id:                match.id,
+    status:            match.status as 'SCHEDULED' | 'LIVE',
+    round:             match.round,
+    homeTeamValue:     computeTV(match.homeTeam),
+    awayTeamValue:     computeTV(match.awayTeam),
+    homeTeamTreasury:  match.homeTeam.treasury,
+    awayTeamTreasury:  match.awayTeam.treasury,
+    homeTeamFanFactor: match.homeTeam.fanFactor,
+    awayTeamFanFactor: match.awayTeam.fanFactor,
     homeTeam: {
       id:       match.homeTeam.id,
       name:     match.homeTeam.name,
