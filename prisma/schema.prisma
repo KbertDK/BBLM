@@ -76,15 +76,16 @@ model Coach {
 }
 
 model Race {
-  id              String       @id @default(cuid())
-  name            String       @unique
+  id              String         @id @default(cuid())
+  name            String         @unique
   rosterSource    String
   rerollPrice     Int
   hasApothecary   Boolean
-  tier            String       @default("1")
+  tier            String         @default("1")
   tierDescription String?
   playerTypes     PlayerType[]
   teams           Team[]
+  mdStarPlayers   MdStarPlayer[] @relation("StarPlayerToRace")
 }
 
 model PlayerType {
@@ -93,6 +94,7 @@ model PlayerType {
   name            String
   cost            Int
   maxCount        Int
+  isJourneyman    Boolean      @default(false)
   ma              Int
   st              Int
   ag              Int
@@ -106,12 +108,13 @@ model PlayerType {
 }
 
 model Skill {
-  id          String        @id @default(cuid())
-  skillId     Int           @unique
-  name        String        @unique
-  category    SkillCategory
-  skillRule   String
-  playerTypes PlayerType[]  @relation("PlayerTypeToSkill")
+  id            String         @id @default(cuid())
+  skillId       Int            @unique
+  name          String         @unique
+  category      SkillCategory
+  skillRule     String
+  playerTypes   PlayerType[]   @relation("PlayerTypeToSkill")
+  mdStarPlayers MdStarPlayer[] @relation("StarPlayerToSkill")
 }
 
 model Team {
@@ -178,12 +181,25 @@ model Match {
   awayTeamValue     Int?
   homeTeamFanFactor Int?
   awayTeamFanFactor Int?
-  awayTeam          Team        @relation("AwayTeam", fields: [awayTeamId], references: [id])
-  homeTeam          Team        @relation("HomeTeam", fields: [homeTeamId], references: [id])
-  league            League      @relation(fields: [leagueId], references: [id])
-  tournament        Tournament? @relation(fields: [tournamentId], references: [id])
+  awayTeam          Team             @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  homeTeam          Team             @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  league            League           @relation(fields: [leagueId], references: [id])
+  tournament        Tournament?      @relation(fields: [tournamentId], references: [id])
   events            MatchEvent[]
   mercs             MatchMerc[]
+  starPlayers       MatchStarPlayer[]
+}
+
+model MatchStarPlayer {
+  id           String       @id @default(cuid())
+  matchId      String
+  side         String
+  starPlayerId String
+  price        Int
+  isCompanion  Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  match        Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  starPlayer   MdStarPlayer @relation(fields: [starPlayerId], references: [id])
 }
 
 model MatchMerc {
@@ -219,6 +235,24 @@ model MdMatchEvent {
   ssp            Int?
   createdAt      DateTime     @default(now())
   matchEvents    MatchEvent[]
+}
+
+model MdStarPlayer {
+  id             String         @id @default(cuid())
+  name           String         @unique
+  price          Int?
+  includedWithId String?
+  ma             Int
+  st             Int
+  ag             Int
+  av             Int
+  notes           String?
+  createdAt       DateTime          @default(now())
+  includedWith    MdStarPlayer?     @relation("StarPlayerCompanion", fields: [includedWithId], references: [id])
+  companions      MdStarPlayer[]    @relation("StarPlayerCompanion")
+  skills          Skill[]           @relation("StarPlayerToSkill")
+  races           Race[]            @relation("StarPlayerToRace")
+  matchStarPlayers MatchStarPlayer[]
 }
 
 model NewsPost {

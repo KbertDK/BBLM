@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc } from './actions'
+import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc, hireStarPlayer, removeStarPlayer } from './actions'
 import { getRaceLogo } from '@/lib/race-logo'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -27,6 +27,18 @@ export interface MercPlayerType {
   skills:   MatchSkill[]
 }
 
+export interface StarPlayerEntry {
+  id:         string
+  name:       string
+  price:      number
+  ma:         number
+  st:         number
+  ag:         number
+  av:         number
+  skills:     MatchSkill[]
+  companions: { id: string; name: string }[]
+}
+
 export interface MatchPlayer {
   id:             string
   number:         number
@@ -40,6 +52,8 @@ export interface MatchPlayer {
   ssp:            number
   skills:         MatchSkill[]
   isMerc?:        boolean
+  isStarPlayer?:  boolean
+  starPlayerId?:  string
   mercCost?:      number
 }
 
@@ -64,6 +78,8 @@ export interface MatchData {
   awayTeamFanFactor: number
   homePlayerTypes:   MercPlayerType[]
   awayPlayerTypes:   MercPlayerType[]
+  homeStarPlayers:   StarPlayerEntry[]
+  awayStarPlayers:   StarPlayerEntry[]
   homeTeam:          MatchTeamData
   awayTeam:          MatchTeamData
 }
@@ -393,6 +409,8 @@ export default function GameOnClient({ matchData }: Props) {
   const [awayPettyGold,  setAwayPettyGold]  = useState(0)
   const [wizardPending,  startWizardTransition] = useTransition()
   const [mercPending,    startMercTransition]   = useTransition()
+  const [induceTab,      setInduceTab]          = useState<'stars' | 'mercs'>('stars')
+  const [openSkillKey,   setOpenSkillKey]       = useState<string | null>(null)
 
   // Restore from localStorage after mount
   useEffect(() => {
@@ -746,13 +764,17 @@ export default function GameOnClient({ matchData }: Props) {
           </div>
         )}
 
-        {/* Step 2: Inducements + Merc Basket */}
+        {/* Step 2: Inducements + Basket */}
         {wizardStep === 'inducements' && (() => {
           const receivingPlayerTypes = receivingTeam === 'home' ? matchData.homePlayerTypes : receivingTeam === 'away' ? matchData.awayPlayerTypes : []
+          const receivingStarPlayers = receivingTeam === 'home' ? matchData.homeStarPlayers : receivingTeam === 'away' ? matchData.awayStarPlayers : []
           const receivingTeamName    = receivingTeam === 'home' ? matchData.homeTeam.name : receivingTeam === 'away' ? matchData.awayTeam.name : ''
           const receivingTV          = receivingTeam === 'home' ? matchData.homeTeamValue  : matchData.awayTeamValue
-          const hiredMercs           = (receivingTeam === 'home' ? matchData.homeTeam.players : matchData.awayTeam.players).filter((p) => p.isMerc)
-          const spent                = hiredMercs.reduce((s, p) => s + (p.mercCost ?? 0), 0)
+          const receivingPlayers     = (receivingTeam === 'home' ? matchData.homeTeam.players : matchData.awayTeam.players)
+          const hiredMercs           = receivingPlayers.filter((p) => p.isMerc && !p.isStarPlayer)
+          const hiredStars           = receivingPlayers.filter((p) => p.isStarPlayer)
+          const hiredStarIds         = new Set(hiredStars.map((p) => p.starPlayerId).filter(Boolean))
+          const spent                = [...hiredMercs, ...hiredStars].reduce((s, p) => s + (p.mercCost ?? 0), 0)
           const remaining            = inducementGp - spent
           const mercBaseValue        = hiredMercs.reduce((s, p) => s + ((p.mercCost ?? 0) - 50000), 0)
           const effectiveTV          = receivingTV + mercBaseValue / 1000
@@ -804,13 +826,92 @@ export default function GameOnClient({ matchData }: Props) {
 
                   {/* Pricelist + Basket */}
                   <div className="flex-1 grid grid-cols-[55%_45%] gap-3 overflow-hidden min-h-0">
-                    {/* Pricelist */}
+                    {/* Pricelist with Stars / Mercs tabs */}
                     <div className="bg-bb-dark border border-bb-border rounded-sm flex flex-col overflow-hidden">
-                      <div className="px-4 py-2 border-b border-bb-border shrink-0">
-                        <span className="text-xs font-heading uppercase tracking-wider text-bb-gold">Mercs Available — {receivingTeamName}</span>
+                      {/* Tabs */}
+                      <div className="flex border-b border-bb-border shrink-0">
+                        {(['stars', 'mercs'] as const).map((tab) => (
+                          <button
+                            key={tab}
+                            onClick={() => setInduceTab(tab)}
+                            className={`flex-1 py-2 text-[11px] font-heading uppercase tracking-wider transition-colors ${
+                              induceTab === tab
+                                ? 'text-bb-gold border-b-2 border-bb-gold -mb-px bg-bb-gold/5'
+                                : 'text-bb-muted hover:text-white'
+                            }`}
+                          >
+                            {tab === 'stars' ? `⭐ Stars (${receivingStarPlayers.length})` : `⚔ Mercs (${receivingPlayerTypes.length})`}
+                          </button>
+                        ))}
                       </div>
+
                       <div className="overflow-y-auto flex-1 divide-y divide-bb-border/30">
-                        {receivingPlayerTypes.map((pt) => {
+                        {/* ── Star Players tab ── */}
+                        {induceTab === 'stars' && receivingStarPlayers.map((sp) => {
+                          const alreadyHired = hiredStarIds.has(sp.id)
+                          const affordable   = sp.price <= remaining
+                          return (
+                            <div key={sp.id} className={`px-4 py-3 ${!affordable && !alreadyHired ? 'opacity-40' : ''}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white font-heading leading-tight">{sp.name}</p>
+                                  {sp.companions.length > 0 && (
+                                    <p className="text-[10px] text-bb-gold/70 mt-0.5">+ {sp.companions.map((c) => c.name).join(', ')} (free)</p>
+                                  )}
+                                  <p className="font-mono text-[11px] text-bb-muted mt-0.5">
+                                    MA{sp.ma} ST{sp.st} AG{sp.ag} AV{sp.av}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1 mt-1.5">
+                                    {sp.skills.map((sk) => {
+                                      const key    = `${sp.id}||${sk.name}`
+                                      const isOpen = openSkillKey === key
+                                      return (
+                                        <button key={sk.name} onClick={() => setOpenSkillKey(isOpen ? null : key)} className={`text-[10px] px-1.5 py-1 rounded-sm border font-heading transition-colors touch-manipulation min-h-[28px] ${
+                                          isOpen
+                                            ? 'border-bb-gold text-bb-gold bg-bb-gold/15'
+                                            : sk.name === 'Loner'
+                                              ? 'bg-bb-crimson/20 border-bb-crimson/50 text-bb-crimson'
+                                              : 'bg-bb-gold/10 border-bb-gold/30 text-bb-gold'
+                                        }`}>{sk.name}</button>
+                                      )
+                                    })}
+                                  </div>
+                                  {openSkillKey && openSkillKey.startsWith(`${sp.id}||`) && (() => {
+                                    const skill = sp.skills.find((s) => `${sp.id}||${s.name}` === openSkillKey)
+                                    return skill ? (
+                                      <div className="mt-1.5 text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2">
+                                        <span className="text-bb-gold font-heading text-[10px] uppercase tracking-wider block mb-0.5">{skill.name}</span>
+                                        {skill.rule}
+                                      </div>
+                                    ) : null
+                                  })()}
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <p className="font-mono text-xs text-white">{sp.price.toLocaleString()}</p>
+                                  <p className="font-mono text-[10px] text-bb-muted">gp</p>
+                                  <button
+                                    disabled={(!affordable || mercPending) && !alreadyHired}
+                                    onClick={() => {
+                                      if (alreadyHired) return
+                                      startMercTransition(async () => {
+                                        await hireStarPlayer(matchData.id, receivingTeam!, sp.id, sp.price)
+                                        router.refresh()
+                                      })
+                                    }}
+                                    className={`mt-1.5 px-2.5 py-1 text-[11px] font-heading uppercase tracking-wider rounded-sm border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                                      alreadyHired
+                                        ? 'border-bb-gold bg-bb-gold/20 text-bb-gold cursor-default'
+                                        : 'border-bb-gold/60 text-bb-gold hover:bg-bb-gold hover:text-bb-dark'
+                                    }`}
+                                  >{alreadyHired ? '✓' : '+'}</button>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+
+                        {/* ── Mercs tab ── */}
+                        {induceTab === 'mercs' && receivingPlayerTypes.map((pt) => {
                           const affordable = pt.mercCost <= remaining
                           return (
                             <div key={pt.id} className={`px-4 py-3 ${!affordable ? 'opacity-40' : ''}`}>
@@ -821,14 +922,29 @@ export default function GameOnClient({ matchData }: Props) {
                                     MA{pt.ma} ST{pt.st} AG{pt.ag} AV{pt.av}
                                   </p>
                                   <div className="flex flex-wrap gap-1 mt-1.5">
-                                    {pt.skills.map((sk) => (
-                                      <span key={sk.name} className={`text-[10px] px-1.5 py-0.5 rounded-sm border font-heading ${
-                                        sk.name === 'Loner'
-                                          ? 'bg-bb-crimson/20 border-bb-crimson/50 text-bb-crimson'
-                                          : 'bg-bb-border/30 border-bb-border text-bb-muted'
-                                      }`}>{sk.name}</span>
-                                    ))}
+                                    {pt.skills.map((sk) => {
+                                      const key    = `${pt.id}||${sk.name}`
+                                      const isOpen = openSkillKey === key
+                                      return (
+                                        <button key={sk.name} onClick={() => setOpenSkillKey(isOpen ? null : key)} className={`text-[10px] px-1.5 py-1 rounded-sm border font-heading transition-colors touch-manipulation min-h-[28px] ${
+                                          isOpen
+                                            ? 'border-bb-gold text-bb-gold bg-bb-gold/15'
+                                            : sk.name === 'Loner'
+                                              ? 'bg-bb-crimson/20 border-bb-crimson/50 text-bb-crimson'
+                                              : 'bg-bb-border/30 border-bb-border text-bb-muted'
+                                        }`}>{sk.name}</button>
+                                      )
+                                    })}
                                   </div>
+                                  {openSkillKey && openSkillKey.startsWith(`${pt.id}||`) && (() => {
+                                    const skill = pt.skills.find((s) => `${pt.id}||${s.name}` === openSkillKey)
+                                    return skill ? (
+                                      <div className="mt-1.5 text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2">
+                                        <span className="text-bb-gold font-heading text-[10px] uppercase tracking-wider block mb-0.5">{skill.name}</span>
+                                        {skill.rule}
+                                      </div>
+                                    ) : null
+                                  })()}
                                 </div>
                                 <div className="shrink-0 text-right">
                                   <p className="font-mono text-xs text-white">{pt.mercCost.toLocaleString()}</p>
@@ -855,13 +971,44 @@ export default function GameOnClient({ matchData }: Props) {
                         <span className="text-xs font-heading uppercase tracking-wider text-bb-gold">Basket</span>
                       </div>
                       <div className="flex-1 overflow-y-auto divide-y divide-bb-border/30">
-                        {hiredMercs.length === 0 && (
-                          <p className="text-bb-muted text-xs italic px-4 py-4">No mercs hired yet.</p>
+                        {hiredMercs.length === 0 && hiredStars.length === 0 && (
+                          <p className="text-bb-muted text-xs italic px-4 py-4">No inducements hired yet.</p>
                         )}
+                        {/* Star players */}
+                        {hiredStars.map((m) => {
+                          const isCompanion = (m.mercCost ?? 0) === 0
+                          return (
+                            <div key={m.id} className="flex items-center justify-between px-4 py-2.5 gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <p className="text-sm text-white truncate">{m.name}</p>
+                                  <span className="text-[9px] bg-bb-gold/20 text-bb-gold border border-bb-gold/30 px-1 py-0.5 rounded-sm font-heading shrink-0">STAR</span>
+                                </div>
+                                <p className="font-mono text-[11px] text-bb-muted">
+                                  {isCompanion ? 'Free (companion)' : `${(m.mercCost ?? 0).toLocaleString()} gp`}
+                                </p>
+                              </div>
+                              {!isCompanion && (
+                                <button
+                                  disabled={mercPending}
+                                  onClick={() => startMercTransition(async () => {
+                                    await removeStarPlayer(matchData.id, m.id)
+                                    router.refresh()
+                                  })}
+                                  className="shrink-0 w-6 h-6 flex items-center justify-center text-bb-muted hover:text-bb-crimson transition-colors rounded-sm text-sm"
+                                >✕</button>
+                              )}
+                            </div>
+                          )
+                        })}
+                        {/* Mercs */}
                         {hiredMercs.map((m) => (
                           <div key={m.id} className="flex items-center justify-between px-4 py-2.5 gap-2">
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm text-white truncate">{m.playerTypeName}</p>
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <p className="text-sm text-white truncate">{m.playerTypeName}</p>
+                                <span className="text-[9px] bg-bb-border/40 text-bb-muted border border-bb-border/60 px-1 py-0.5 rounded-sm font-heading shrink-0">MERC</span>
+                              </div>
                               <p className="font-mono text-[11px] text-bb-muted">{(m.mercCost ?? 0).toLocaleString()} gp</p>
                             </div>
                             <button
@@ -915,6 +1062,7 @@ export default function GameOnClient({ matchData }: Props) {
             </div>
           )
         })()}
+
       </div>
     )
   }
@@ -1616,6 +1764,7 @@ export default function GameOnClient({ matchData }: Props) {
           onClose={() => setRosterSide(null)}
         />
       )}
+
     </div>
   )
 }

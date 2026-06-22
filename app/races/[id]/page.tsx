@@ -165,8 +165,72 @@ export default async function RaceDetailPage({ params }: Props) {
           )}
         </div>
 
+        {/* Star Players */}
+        <div className="mb-12">
+          <div className="flex items-center gap-4 mb-4">
+            <h2 className="font-heading text-lg font-bold text-bb-gold tracking-widest uppercase">Star Players</h2>
+            <div className="flex-1 h-px bg-bb-border" />
+          </div>
+
+          {race.starPlayers.length === 0 ? (
+            <div className="bg-bb-dark border border-bb-border rounded-sm px-6 py-10 text-center">
+              <p className="text-bb-muted italic text-sm">No star players available for this race.</p>
+            </div>
+          ) : (
+            <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-xl shadow-black/50">
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_3fr] text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-4 py-3 gap-2">
+                <span>Name</span>
+                <span className="text-right">Price</span>
+                <span className="text-center">MA</span>
+                <span className="text-center">ST</span>
+                <span className="text-center">AG</span>
+                <span className="text-center">AV</span>
+                <span>Skills</span>
+              </div>
+              {race.starPlayers.map((sp, i) => (
+                <div key={sp.id} className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_3fr] items-start px-4 py-3.5 gap-2 border-b border-bb-border last:border-0 ${i % 2 !== 0 ? 'bg-white/[0.02]' : ''}`}>
+                  <div>
+                    <span className="font-semibold text-sm text-white">{sp.name}</span>
+                    {sp.companions.length > 0 && (
+                      <p className="text-[11px] text-bb-muted/50 italic mt-0.5">
+                        + {sp.companions.map((c) => c.name).join(', ')}
+                      </p>
+                    )}
+                    {sp.includedWithName && (
+                      <p className="text-[11px] text-bb-muted/40 italic mt-0.5">
+                        Included with {sp.includedWithName}
+                      </p>
+                    )}
+                    {sp.notes && (
+                      <p className="text-[11px] text-bb-muted/50 mt-0.5">{sp.notes}</p>
+                    )}
+                  </div>
+                  <span className="text-right text-sm text-bb-gold font-mono">
+                    {sp.price != null ? `${sp.price.toLocaleString()} gp` : '—'}
+                  </span>
+                  <span className="text-center font-bold text-sm text-white">{sp.ma}</span>
+                  <span className="text-center font-bold text-sm text-white">{sp.st}</span>
+                  <span className="text-center font-bold text-sm text-white">{sp.ag}</span>
+                  <span className="text-center font-bold text-sm text-white">{sp.av}</span>
+                  <div className="flex flex-wrap gap-1">
+                    {sp.skills.length === 0 ? (
+                      <span className="text-bb-muted/40 text-xs italic">—</span>
+                    ) : (
+                      sp.skills.map((s) => (
+                        <span key={s.id} title={s.skillRule} className={`text-xs px-1.5 py-0.5 rounded-sm border cursor-help ${categoryColor[s.category] ?? ''}`}>
+                          {s.name}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Skill legend */}
-        {race.playerTypes.length > 0 && (
+        {(race.playerTypes.length > 0 || race.starPlayers.length > 0) && (
           <div className="flex flex-wrap gap-3 text-xs text-bb-muted mb-12">
             {Object.entries(categoryLabel).map(([k, v]) => (
               <span key={k} className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm border ${categoryColor[k]}`}>

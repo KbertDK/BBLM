@@ -32,8 +32,23 @@ export interface PlayerTypeSummary {
   startingSkills: SkillRef[]
 }
 
+export interface StarPlayerSummary {
+  id: string
+  name: string
+  price: number | null
+  ma: number
+  st: number
+  ag: number
+  av: number
+  notes: string | null
+  skills: SkillRef[]
+  companions: { id: string; name: string }[]
+  includedWithName: string | null
+}
+
 export interface RaceDetail extends RaceSummary {
   playerTypes: PlayerTypeSummary[]
+  starPlayers: StarPlayerSummary[]
 }
 
 export async function getAllRaces(): Promise<RaceSummary[]> {
@@ -67,6 +82,14 @@ export async function getRaceById(id: string): Promise<RaceDetail | null> {
           },
         },
       },
+      mdStarPlayers: {
+        orderBy: { name: 'asc' },
+        include: {
+          skills:       { orderBy: { skillId: 'asc' }, select: { id: true, name: true, category: true, skillRule: true } },
+          companions:   { select: { id: true, name: true } },
+          includedWith: { select: { name: true } },
+        },
+      },
     },
   })
   if (!race) return null
@@ -79,7 +102,7 @@ export async function getRaceById(id: string): Promise<RaceDetail | null> {
     teamCount:       race._count.teams,
     tier:            race.tier,
     tierDescription: race.tierDescription,
-    playerTypes:   race.playerTypes.map((p) => ({
+    playerTypes: race.playerTypes.map((p) => ({
       id:              p.id,
       name:            p.name,
       cost:            p.cost,
@@ -96,6 +119,19 @@ export async function getRaceById(id: string): Promise<RaceDetail | null> {
         category:  s.category,
         skillRule: s.skillRule,
       })),
+    })),
+    starPlayers: race.mdStarPlayers.map((sp) => ({
+      id:               sp.id,
+      name:             sp.name,
+      price:            sp.price,
+      ma:               sp.ma,
+      st:               sp.st,
+      ag:               sp.ag,
+      av:               sp.av,
+      notes:            sp.notes,
+      skills:           sp.skills.map((s) => ({ id: s.id, name: s.name, category: s.category, skillRule: s.skillRule })),
+      companions:       sp.companions.map((c) => ({ id: c.id, name: c.name })),
+      includedWithName: sp.includedWith?.name ?? null,
     })),
   }
 }

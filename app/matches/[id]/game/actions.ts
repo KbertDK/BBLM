@@ -88,6 +88,44 @@ export async function removeMerc(matchId: string, mercId: string) {
   revalidatePath(`/matches/${matchId}/game`)
 }
 
+export async function hireStarPlayer(matchId: string, side: 'home' | 'away', starPlayerId: string, price: number) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  const exists = await prisma.matchStarPlayer.findFirst({ where: { matchId, side, starPlayerId } })
+  if (exists) return
+  await prisma.matchStarPlayer.create({ data: { matchId, side, starPlayerId, price } })
+  // Auto-hire companions (Grotty with Brick, Dribl with Drull, Valen with Lucian)
+  const sp = await prisma.mdStarPlayer.findUnique({
+    where: { id: starPlayerId },
+    select: { companions: { select: { id: true } } },
+  })
+  if (sp?.companions.length) {
+    await prisma.matchStarPlayer.createMany({
+      data: sp.companions.map((c) => ({ matchId, side, starPlayerId: c.id, price: 0, isCompanion: true })),
+      skipDuplicates: true,
+    })
+  }
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function removeStarPlayer(matchId: string, id: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  const record = await prisma.matchStarPlayer.findUnique({ where: { id } })
+  if (!record || record.isCompanion) return
+  const sp = await prisma.mdStarPlayer.findUnique({
+    where: { id: record.starPlayerId },
+    select: { companions: { select: { id: true } } },
+  })
+  if (sp?.companions.length) {
+    await prisma.matchStarPlayer.deleteMany({
+      where: { matchId, side: record.side, starPlayerId: { in: sp.companions.map((c) => c.id) } },
+    })
+  }
+  await prisma.matchStarPlayer.delete({ where: { id } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
 export async function startMatch(matchId: string) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return

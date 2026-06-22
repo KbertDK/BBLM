@@ -108,8 +108,20 @@ export default async function GameOnPage({ params }: PageProps) {
     )
   }
 
-  // Parallel-fetch pricelist player types and existing mercs
-  const [homePlayerTypes, awayPlayerTypes, matchMercs] = await Promise.all([
+  const homeRaceName = match.homeTeam.race.name
+  const awayRaceName = match.awayTeam.race.name
+
+  const starPlayerSelect = {
+    where:   { includedWithId: null, OR: [{ races: { some: {} } }, { races: { none: {} } }] as object[] },
+    include: {
+      skills:     { select: { name: true, skillRule: true } },
+      companions: { include: { skills: { select: { name: true, skillRule: true } } } },
+    },
+    orderBy: { price: 'asc' as const },
+  }
+
+  // Parallel-fetch pricelist player types, mercs, and star players
+  const [homePlayerTypes, awayPlayerTypes, matchMercs, homeStarPlayerRows, awayStarPlayerRows, matchStarRows] = await Promise.all([
     prisma.playerType.findMany({
       where:   { raceId: match.homeTeam.raceId },
       orderBy: { cost: 'asc' },
@@ -125,7 +137,82 @@ export default async function GameOnPage({ params }: PageProps) {
       include: { playerType: { include: { startingSkills: { select: { name: true, skillRule: true } } } } },
       orderBy: { createdAt: 'asc' },
     }),
+    // Star players eligible for home race OR universal (no races)
+    prisma.mdStarPlayer.findMany({
+      ...starPlayerSelect,
+      where: {
+        includedWithId: null,
+        OR: [{ races: { some: { name: homeRaceName } } }, { races: { none: {} } }],
+      },
+    }),
+    // Star players eligible for away race OR universal (no races)
+    prisma.mdStarPlayer.findMany({
+      ...starPlayerSelect,
+      where: {
+        includedWithId: null,
+        OR: [{ races: { some: { name: awayRaceName } } }, { races: { none: {} } }],
+      },
+    }),
+    prisma.matchStarPlayer.findMany({
+      where:   { matchId: id },
+      include: { starPlayer: { include: { skills: { select: { name: true, skillRule: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    }),
   ])
+
+  // Synthesise star-player lineup entries (similar to mercs)
+  const homeStarLinePlayers = matchStarRows
+    .filter((m) => m.side === 'home')
+    .map((m) => ({
+      id:             m.id,
+      number:         0,
+      name:           m.starPlayer.name,
+      status:         'ACTIVE' as const,
+      playerTypeName: 'Star Player',
+      ma:             m.starPlayer.ma,
+      st:             m.starPlayer.st,
+      ag:             m.starPlayer.ag,
+      av:             m.starPlayer.av,
+      ssp:            0,
+      skills:         m.starPlayer.skills.map((s) => ({ name: s.name, rule: s.skillRule })),
+      isMerc:         true  as const,
+      isStarPlayer:   true  as const,
+      starPlayerId:   m.starPlayerId,
+      mercCost:       m.price,
+    }))
+
+  const awayStarLinePlayers = matchStarRows
+    .filter((m) => m.side === 'away')
+    .map((m) => ({
+      id:             m.id,
+      number:         0,
+      name:           m.starPlayer.name,
+      status:         'ACTIVE' as const,
+      playerTypeName: 'Star Player',
+      ma:             m.starPlayer.ma,
+      st:             m.starPlayer.st,
+      ag:             m.starPlayer.ag,
+      av:             m.starPlayer.av,
+      ssp:            0,
+      skills:         m.starPlayer.skills.map((s) => ({ name: s.name, rule: s.skillRule })),
+      isMerc:         true  as const,
+      isStarPlayer:   true  as const,
+      starPlayerId:   m.starPlayerId,
+      mercCost:       m.price,
+    }))
+
+  const mapStarPlayers = (rows: typeof homeStarPlayerRows) =>
+    rows.map((sp) => ({
+      id:         sp.id,
+      name:       sp.name,
+      price:      sp.price!,
+      ma:         sp.ma,
+      st:         sp.st,
+      ag:         sp.ag,
+      av:         sp.av,
+      skills:     sp.skills.map((s) => ({ name: s.name, rule: s.skillRule })),
+      companions: sp.companions.map((c) => ({ id: c.id, name: c.name })),
+    }))
 
   const lonerEntry = {
     name: 'Loner',
@@ -204,6 +291,8 @@ export default async function GameOnPage({ params }: PageProps) {
     awayTeamFanFactor: match.awayTeam.fanFactor,
     homePlayerTypes:   mapPriceList(homePlayerTypes),
     awayPlayerTypes:   mapPriceList(awayPlayerTypes),
+    homeStarPlayers:   mapStarPlayers(homeStarPlayerRows),
+    awayStarPlayers:   mapStarPlayers(awayStarPlayerRows),
     homeTeam: {
       id:       match.homeTeam.id,
       name:     match.homeTeam.name,
@@ -225,6 +314,7 @@ export default async function GameOnPage({ params }: PageProps) {
           isMerc:         false as const,
         })),
         ...homeMercPlayers,
+        ...homeStarLinePlayers,
       ],
     },
     awayTeam: {
@@ -248,6 +338,7 @@ export default async function GameOnPage({ params }: PageProps) {
           isMerc:         false as const,
         })),
         ...awayMercPlayers,
+        ...awayStarLinePlayers,
       ],
     },
   }

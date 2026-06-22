@@ -85,6 +85,14 @@ export const TABLE_META_OVERRIDES: TableMetaOverride[] = [
     },
   },
   {
+    key: 'mdStarPlayer',
+    description: 'Blood Bowl star players available for hire.',
+    fieldMeta: {
+      notes:          { type: 'textarea' },
+      includedWithId: { readonly: true },
+    },
+  },
+  {
     key: 'newsPost',
     description: 'News articles posted by coaches or admins.',
     fieldMeta: {
