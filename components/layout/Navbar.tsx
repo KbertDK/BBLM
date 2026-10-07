@@ -8,6 +8,7 @@ const navLinks = [
   { href: '/races',      label: 'Races' },
   { href: '/schedule',   label: 'Schedule' },
   { href: '/standings',  label: 'Standings' },
+  { href: '/rules',      label: 'Rules' },
 ]
 
 export default async function Navbar() {

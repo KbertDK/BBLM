@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
+import { skillRollsAvailable, improvementOptions, canIncreaseStat, VALUE_MODIFIERS, type StatName } from '@/lib/ssp'
 
 async function requireOwner(teamId: string) {
   const session = await getSession()
@@ -180,6 +181,172 @@ export async function sackPlayer(formData: FormData) {
   })
 
   revalidatePath(`/teams/${player.teamId}`)
+}
+
+export async function recordSkillRoll(formData: FormData) {
+  const playerId = formData.get('playerId') as string
+  const die1 = parseInt((formData.get('die1') as string) ?? '', 10)
+  const die2 = parseInt((formData.get('die2') as string) ?? '', 10)
+  if (!playerId || isNaN(die1) || isNaN(die2) || die1 < 1 || die1 > 6 || die2 < 1 || die2 > 6) return
+
+  const player = await prisma.teamPlayer.findUnique({
+    where:  { id: playerId },
+    select: { teamId: true, ssp: true, _count: { select: { skillRolls: true } } },
+  })
+  if (!player) return
+  if (!await requireOwner(player.teamId)) return
+  if (skillRollsAvailable(player.ssp, player._count.skillRolls) <= 0) return
+
+  await prisma.skillRoll.create({ data: { teamPlayerId: playerId, die1, die2 } })
+  revalidatePath(`/teams/${player.teamId}`)
+}
+
+export async function pickSkill(formData: FormData) {
+  const rollId  = formData.get('rollId') as string
+  const skillId = formData.get('skillId') as string
+  if (!rollId || !skillId) return
+
+  const roll = await prisma.skillRoll.findUnique({
+    where:  { id: rollId },
+    select: { id: true, consumed: true, teamPlayerId: true, teamPlayer: { select: { teamId: true, playerType: { select: { skillRollNormal: true } } } } },
+  })
+  if (!roll || roll.consumed) return
+  if (!await requireOwner(roll.teamPlayer.teamId)) return
+
+  const skill = await prisma.skill.findUnique({ where: { id: skillId }, select: { category: true } })
+  if (!skill) return
+
+  // CRP1 Value Modifiers Table: a skill only accessible via a Double roll is worth more.
+  const isNormal       = roll.teamPlayer.playerType.skillRollNormal.includes(skill.category)
+  const valueIncrease  = isNormal ? VALUE_MODIFIERS.normalSkill : VALUE_MODIFIERS.doubleSkill
+
+  await prisma.$transaction([
+    prisma.teamPlayer.update({
+      where: { id: roll.teamPlayerId },
+      data:  { learnedSkills: { connect: { id: skillId } }, value: { increment: valueIncrease } },
+    }),
+    prisma.skillRoll.update({ where: { id: rollId }, data: { consumed: true } }),
+  ])
+
+  revalidatePath(`/teams/${roll.teamPlayer.teamId}`)
+}
+
+export async function pickStatIncrease(formData: FormData) {
+  const rollId = formData.get('rollId') as string
+  const stat   = formData.get('stat') as StatName
+  if (!rollId || !(['MA', 'ST', 'AG', 'AV'] as const).includes(stat)) return
+
+  const roll = await prisma.skillRoll.findUnique({
+    where:  { id: rollId },
+    select: {
+      id: true, consumed: true, die1: true, die2: true, teamPlayerId: true,
+      teamPlayer: {
+        select: {
+          teamId: true, maIncrease: true, stIncrease: true, agIncrease: true, avIncrease: true,
+          playerType: { select: { ma: true, st: true, ag: true, av: true } },
+        },
+      },
+    },
+  })
+  if (!roll || roll.consumed) return
+  if (!await requireOwner(roll.teamPlayer.teamId)) return
+
+  const { statOptions } = improvementOptions(roll.die1, roll.die2)
+  if (!statOptions.includes(stat)) return
+
+  const base    = { MA: roll.teamPlayer.playerType.ma, ST: roll.teamPlayer.playerType.st, AG: roll.teamPlayer.playerType.ag, AV: roll.teamPlayer.playerType.av }[stat]
+  const current = { MA: roll.teamPlayer.maIncrease,    ST: roll.teamPlayer.stIncrease,    AG: roll.teamPlayer.agIncrease,    AV: roll.teamPlayer.avIncrease }[stat]
+  if (!canIncreaseStat(base, current)) return
+
+  const fieldMap: Record<StatName, 'maIncrease' | 'stIncrease' | 'agIncrease' | 'avIncrease'> = {
+    MA: 'maIncrease', ST: 'stIncrease', AG: 'agIncrease', AV: 'avIncrease',
+  }
+  const field = fieldMap[stat]
+
+  await prisma.$transaction([
+    prisma.teamPlayer.update({
+      where: { id: roll.teamPlayerId },
+      data:  { [field]: { increment: 1 }, value: { increment: VALUE_MODIFIERS[stat] } },
+    }),
+    prisma.skillRoll.update({ where: { id: rollId }, data: { consumed: true } }),
+  ])
+
+  revalidatePath(`/teams/${roll.teamPlayer.teamId}`)
+}
+
+export async function signJourneyman(formData: FormData) {
+  const journeymanId = formData.get('journeymanId') as string
+  if (!journeymanId) return
+
+  const journeyman = await prisma.matchJourneyman.findUnique({
+    where:  { id: journeymanId },
+    select: {
+      id: true, resolved: true, injuryStatus: true, side: true,
+      touchdowns: true, completePasses: true, interceptions: true, casualties: true, mvp: true, ssp: true,
+      playerTypeId: true,
+      playerType: { select: { cost: true, maxCount: true, raceId: true } },
+      match: { select: { homeTeamId: true, awayTeamId: true } },
+    },
+  })
+  if (!journeyman || journeyman.resolved || journeyman.injuryStatus === 'DEAD') return
+
+  const teamId = journeyman.side === 'home' ? journeyman.match.homeTeamId : journeyman.match.awayTeamId
+  if (!await requireOwner(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: {
+      treasury: true,
+      league:   { select: { ruleSet: { select: { numberOfPlayers: true } } } },
+      players:  { where: { status: { in: ['ACTIVE', 'MNG'] } }, select: { number: true, playerTypeId: true } },
+    },
+  })
+  if (!team) return
+
+  const maxSlots = team.league.ruleSet?.numberOfPlayers ?? 16
+  if (team.players.length >= maxSlots) return
+  const typeCount = team.players.filter((p) => p.playerTypeId === journeyman.playerTypeId).length
+  if (typeCount >= journeyman.playerType.maxCount) return
+  if (team.treasury < journeyman.playerType.cost) return
+
+  const usedNumbers = new Set(team.players.map((p) => p.number))
+  let number = 1
+  while (usedNumbers.has(number) && number <= 99) number++
+  if (number > 99) return
+
+  await prisma.$transaction([
+    prisma.teamPlayer.create({
+      data: {
+        teamId, playerTypeId: journeyman.playerTypeId, number,
+        status: journeyman.injuryStatus,
+        touchdowns: journeyman.touchdowns, completePasses: journeyman.completePasses,
+        interceptions: journeyman.interceptions, casualties: journeyman.casualties,
+        mvp: journeyman.mvp, ssp: journeyman.ssp,
+        value: journeyman.playerType.cost,
+      },
+    }),
+    prisma.team.update({ where: { id: teamId }, data: { treasury: { decrement: journeyman.playerType.cost } } }),
+    prisma.matchJourneyman.update({ where: { id: journeymanId }, data: { resolved: true } }),
+  ])
+
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function fireJourneyman(formData: FormData) {
+  const journeymanId = formData.get('journeymanId') as string
+  if (!journeymanId) return
+
+  const journeyman = await prisma.matchJourneyman.findUnique({
+    where:  { id: journeymanId },
+    select: { resolved: true, side: true, match: { select: { homeTeamId: true, awayTeamId: true } } },
+  })
+  if (!journeyman || journeyman.resolved) return
+
+  const teamId = journeyman.side === 'home' ? journeyman.match.homeTeamId : journeyman.match.awayTeamId
+  if (!await requireOwner(teamId)) return
+
+  await prisma.matchJourneyman.update({ where: { id: journeymanId }, data: { resolved: true } })
+  revalidatePath(`/teams/${teamId}`)
 }
 
 export async function reinstatePlayer(formData: FormData) {

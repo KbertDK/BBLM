@@ -105,16 +105,18 @@ model PlayerType {
   teamPlayers     TeamPlayer[]
   startingSkills  Skill[]      @relation("PlayerTypeToSkill")
   matchMercs      MatchMerc[]
+  matchJourneymen MatchJourneyman[]
 }
 
 model Skill {
-  id            String         @id @default(cuid())
-  skillId       Int            @unique
-  name          String         @unique
-  category      SkillCategory
-  skillRule     String
-  playerTypes   PlayerType[]   @relation("PlayerTypeToSkill")
-  mdStarPlayers MdStarPlayer[] @relation("StarPlayerToSkill")
+  id               String         @id @default(cuid())
+  skillId          Int            @unique
+  name             String         @unique
+  category         SkillCategory
+  skillRule        String
+  playerTypes      PlayerType[]   @relation("PlayerTypeToSkill")
+  mdStarPlayers    MdStarPlayer[] @relation("StarPlayerToSkill")
+  learnedByPlayers TeamPlayer[]   @relation("TeamPlayerLearnedSkill")
 }
 
 model Team {
@@ -161,8 +163,40 @@ model TeamPlayer {
   ssp             Int          @default(0)
   value           Int          @default(0)
   teamGamesAtSack Int?
+  maIncrease      Int          @default(0)
+  stIncrease      Int          @default(0)
+  agIncrease      Int          @default(0)
+  avIncrease      Int          @default(0)
   playerType      PlayerType   @relation(fields: [playerTypeId], references: [id])
   team            Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  skillRolls      SkillRoll[]
+  learnedSkills   Skill[]      @relation("TeamPlayerLearnedSkill")
+  matchStats      MatchPlayerStat[]
+}
+
+model MatchPlayerStat {
+  id             String     @id @default(cuid())
+  matchId        String
+  teamPlayerId   String
+  touchdowns     Int        @default(0)
+  completePasses Int        @default(0)
+  interceptions  Int        @default(0)
+  casualties     Int        @default(0)
+  mvp            Int        @default(0)
+  ssp            Int        @default(0)
+  createdAt      DateTime   @default(now())
+  match          Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  teamPlayer     TeamPlayer @relation(fields: [teamPlayerId], references: [id], onDelete: Cascade)
+}
+
+model SkillRoll {
+  id           String     @id @default(cuid())
+  teamPlayerId String
+  die1         Int
+  die2         Int
+  consumed     Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  teamPlayer   TeamPlayer @relation(fields: [teamPlayerId], references: [id], onDelete: Cascade)
 }
 
 model Match {
@@ -181,6 +215,8 @@ model Match {
   awayTeamValue     Int?
   homeTeamFanFactor Int?
   awayTeamFanFactor Int?
+  homeApothecaryUsed Boolean @default(false)
+  awayApothecaryUsed Boolean @default(false)
   awayTeam          Team             @relation("AwayTeam", fields: [awayTeamId], references: [id])
   homeTeam          Team             @relation("HomeTeam", fields: [homeTeamId], references: [id])
   league            League           @relation(fields: [leagueId], references: [id])
@@ -188,6 +224,9 @@ model Match {
   events            MatchEvent[]
   mercs             MatchMerc[]
   starPlayers       MatchStarPlayer[]
+  journeymen        MatchJourneyman[]
+  inducements       MatchInducement[]
+  matchPlayerStats  MatchPlayerStat[]
 }
 
 model MatchStarPlayer {
@@ -197,6 +236,7 @@ model MatchStarPlayer {
   starPlayerId String
   price        Int
   isCompanion  Boolean      @default(false)
+  mvp          Int          @default(0)
   createdAt    DateTime     @default(now())
   match        Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
   starPlayer   MdStarPlayer @relation(fields: [starPlayerId], references: [id])
@@ -208,9 +248,53 @@ model MatchMerc {
   side         String
   playerTypeId String
   cost         Int
+  mvp          Int        @default(0)
   createdAt    DateTime   @default(now())
   match        Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
   playerType   PlayerType @relation(fields: [playerTypeId], references: [id])
+}
+
+model MatchJourneyman {
+  id             String       @id @default(cuid())
+  matchId        String
+  side           String
+  playerTypeId   String
+  number         Int?
+  touchdowns     Int          @default(0)
+  completePasses Int          @default(0)
+  interceptions  Int          @default(0)
+  casualties     Int          @default(0)
+  mvp            Int          @default(0)
+  ssp            Int          @default(0)
+  injuryStatus   PlayerStatus @default(ACTIVE)
+  resolved       Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  match          Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  playerType     PlayerType   @relation(fields: [playerTypeId], references: [id])
+}
+
+model MdInducement {
+  id        String @id @default(cuid())
+  name      String @unique
+  maxCount  Int
+  price     Int
+  rule      String
+  createdAt DateTime @default(now())
+  matches   MatchInducement[]
+}
+
+model MatchInducement {
+  id            String       @id @default(cuid())
+  matchId       String
+  side          String
+  inducementId  String
+  cost          Int
+  used          Boolean      @default(false)
+  chefHalf1Used Boolean      @default(false)
+  chefHalf2Used Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  match         Match        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  inducement    MdInducement @relation(fields: [inducementId], references: [id])
 }
 
 model MatchEvent {

@@ -78,6 +78,20 @@ export async function getMatchReport(matchId: string) {
       awayTeam: { select: { id: true, name: true, race: { select: { name: true } } } },
       league:   { select: { name: true, season: true } },
       events:   { orderBy: { createdAt: 'asc' } },
+      matchPlayerStats: {
+        include: { teamPlayer: { select: { id: true, name: true, number: true, teamId: true, playerType: { select: { name: true } } } } },
+      },
+      mercs: {
+        where:   { mvp: { gt: 0 } },
+        include: { playerType: { select: { name: true } } },
+      },
+      starPlayers: {
+        where:   { mvp: { gt: 0 } },
+        include: { starPlayer: { select: { name: true } } },
+      },
+      journeymen: {
+        include: { playerType: { select: { name: true } } },
+      },
     },
   })
 }

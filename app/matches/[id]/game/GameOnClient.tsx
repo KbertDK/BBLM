@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc, hireStarPlayer, removeStarPlayer } from './actions'
+import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc, hireStarPlayer, removeStarPlayer, hireJourneyman, removeJourneyman, updateJourneymanNumber, hireInducement, removeInducement, markInducementUsed, markApothecaryUsed } from './actions'
 import { getRaceLogo } from '@/lib/race-logo'
+import { getSspInfo } from '@/lib/ssp'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,37 @@ export interface MatchPlayer {
   isStarPlayer?:  boolean
   starPlayerId?:  string
   mercCost?:      number
+  isJourneyman?:  boolean
+}
+
+export interface JourneymanPlayerType {
+  id:     string
+  name:   string
+  cost:   number
+  ma:     number
+  st:     number
+  ag:     number
+  av:     number
+  skills: MatchSkill[]
+}
+
+export interface InducementType {
+  id:       string
+  name:     string
+  maxCount: number
+  price:    number
+  rule:     string
+}
+
+export interface PurchasedInducement {
+  id:            string
+  inducementId:  string
+  name:          string
+  cost:          number
+  rule:          string
+  used:          boolean
+  chefHalf1Used: boolean
+  chefHalf2Used: boolean
 }
 
 export interface MatchTeamData {
@@ -78,15 +110,25 @@ export interface MatchData {
   awayTeamFanFactor: number
   homePlayerTypes:   MercPlayerType[]
   awayPlayerTypes:   MercPlayerType[]
+  homeJourneymanTypes: JourneymanPlayerType[]
+  awayJourneymanTypes: JourneymanPlayerType[]
   homeStarPlayers:   StarPlayerEntry[]
   awayStarPlayers:   StarPlayerEntry[]
+  homeInducementTypes: InducementType[]
+  awayInducementTypes: InducementType[]
+  homeInducementsPurchased: PurchasedInducement[]
+  awayInducementsPurchased: PurchasedInducement[]
+  homeHasApothecary:  boolean
+  awayHasApothecary:  boolean
+  homeApothecaryUsed: boolean
+  awayApothecaryUsed: boolean
   homeTeam:          MatchTeamData
   awayTeam:          MatchTeamData
 }
 
 interface MatchEvent {
   id:             string
-  type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'HALFTIME'
+  type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'HALFTIME' | 'CHEF' | 'SENT_OFF'
   turn?:          number        // which turn (1–16) the event occurred on
   // TD
   scoringTeam?:   'home' | 'away'
@@ -104,17 +146,22 @@ interface MatchEvent {
 interface GameState {
   phase:            Phase
   turn:             number      // 1–16; 1–8 = 1st half, 9–16 = 2nd half
-  lineup:           { home: string[]; away: string[] }
   events:           MatchEvent[]
   mvp:              { home: string | null; away: string | null }
   winnings:         { home: number; away: number }
   injuryOverrides:  Record<string, 'BH' | 'MNG' | 'DEAD'>   // keyed by playerId
 }
 
+type MedicalOption = { kind: 'apothecary' | 'matchInducement'; id?: string; label: string }
+
 type ModalState =
   | { type: 'td';          step: 0 | 1 | 2 | 3; eventTurn: number | null; team: 'home' | 'away' | null; scorerId: string | null; hasPass: boolean; passerId: string | null }
-  | { type: 'casualty';    step: 0 | 1 | 2 | 3 | 4; eventTurn: number | null; attackTeam: 'home' | 'away' | null; attackerId: string | null; victimId: string | null; result: CasualtyResult | null }
+  | { type: 'casualty';    step: 0 | 1 | 2 | 3 | 4 | 5; eventTurn: number | null; attackTeam: 'home' | 'away' | null; attackerId: string | null; victimId: string | null; result: CasualtyResult | null; medical: MedicalOption | null }
   | { type: 'interception'; step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; playerId: string | null }
+  | { type: 'inducements' }
+  | { type: 'wizard'; step: 0 | 1 | 2 | 3; eventTurn: number | null; side: 'home' | 'away' | null; spell: 'fireball' | 'lightning' | null; victims: { playerId: string; result: CasualtyResult }[]; pendingPlayerId: string | null; pendingResult: CasualtyResult | null }
+  | { type: 'sentoff'; step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; playerId: string | null; bribeId: string | null; outcome: 'success' | 'failed' | null }
+  | { type: 'chef'; half: 1 | 2 | null; side: 'home' | 'away' | null; successes: number | null }
   | null
 
 interface PlayerUpdate {
@@ -158,9 +205,8 @@ function computePlayerUpdates(
   state: GameState,
   allPlayers: MatchPlayer[],
 ): PlayerUpdate[] {
-  const { events, lineup, mvp, injuryOverrides } = state
-  const lineupSet = new Set([...lineup.home, ...lineup.away])
-  allPlayers = allPlayers.filter((p) => !p.isMerc)
+  const { events, mvp, injuryOverrides } = state
+  const lineupSet = new Set(allPlayers.filter((p) => p.status !== 'MNG').map((p) => p.id))
   const mvpSet    = new Set([mvp.home, mvp.away].filter(Boolean) as string[])
 
   // Worst casualty result per victim
@@ -179,13 +225,17 @@ function computePlayerUpdates(
   for (const p of allPlayers) {
     if (!lineupSet.has(p.id)) continue
 
-    const deltaTouchdowns    = events.filter((e) => e.type === 'TD' && e.scorerId === p.id).length
-    const deltaCompletePasses = events.filter((e) => e.type === 'TD' && e.passerId === p.id).length
-    const deltaInterceptions = events.filter((e) => e.type === 'INTERCEPTION' && e.interceptorId === p.id).length
-    const deltaCasualties    = events.filter(
+    // RAW (CRP1): Mercenaries and Star Players never earn Star Player points other than
+    // the MVP award, and can never gain new skills — so their TD/CP/INT/CAS never count.
+    const isMercOrStar = p.isMerc
+    const deltaMVP = mvpSet.has(p.id) ? 1 : 0
+
+    const deltaTouchdowns     = isMercOrStar ? 0 : events.filter((e) => e.type === 'TD' && e.scorerId === p.id).length
+    const deltaCompletePasses = isMercOrStar ? 0 : events.filter((e) => e.type === 'TD' && e.passerId === p.id).length
+    const deltaInterceptions  = isMercOrStar ? 0 : events.filter((e) => e.type === 'INTERCEPTION' && e.interceptorId === p.id).length
+    const deltaCasualties     = isMercOrStar ? 0 : events.filter(
       (e) => e.type === 'CASUALTY' && e.attackerId === p.id && e.casualtyResult !== 'KO',
     ).length
-    const deltaMVP = mvpSet.has(p.id) ? 1 : 0
 
     const deltaSSP =
       deltaTouchdowns     * 3 +
@@ -224,20 +274,6 @@ function computePlayerUpdates(
   return updates
 }
 
-// ─── SSP helpers ──────────────────────────────────────────────────────────────
-
-function getSspInfo(ssp: number): { levelName: string; toNext: number | null; nearPromotion: boolean } {
-  let levelName = 'Legend'
-  let nextThreshold: number | null = null
-  if      (ssp < 6)   { levelName = 'Rookie';        nextThreshold = 6   }
-  else if (ssp < 16)  { levelName = 'Experienced';   nextThreshold = 16  }
-  else if (ssp < 31)  { levelName = 'Veteran';        nextThreshold = 31  }
-  else if (ssp < 51)  { levelName = 'Emerging Star';  nextThreshold = 51  }
-  else if (ssp < 76)  { levelName = 'Star';           nextThreshold = 76  }
-  else if (ssp < 176) { levelName = 'Super Star';     nextThreshold = 176 }
-  const toNext = nextThreshold !== null ? nextThreshold - ssp : null
-  return { levelName, toNext, nearPromotion: toNext !== null && toNext <= 3 }
-}
 
 // ─── Roster Modal ─────────────────────────────────────────────────────────────
 
@@ -384,10 +420,6 @@ export default function GameOnClient({ matchData }: Props) {
   const defaultState = (): GameState => ({
     phase: matchData.status === 'LIVE' ? 'live' : 'prematch',
     turn:  1,
-    lineup: {
-      home: matchData.homeTeam.players.filter((p) => p.status === 'ACTIVE').map((p) => p.id),
-      away: matchData.awayTeam.players.filter((p) => p.status === 'ACTIVE').map((p) => p.id),
-    },
     events:          [],
     mvp:             { home: null, away: null },
     winnings:        { home: 0, away: 0 },
@@ -401,15 +433,16 @@ export default function GameOnClient({ matchData }: Props) {
 
   const router = useRouter()
 
-  type WizardStep = 'petty-gold' | 'inducements' | 'done'
+  type WizardStep = 'petty-gold' | 'lineup' | 'inducements'
   const [wizardStep,     setWizardStep]     = useState<WizardStep>(
-    matchData.status !== 'SCHEDULED' || matchData.wizardDone ? 'done' : 'petty-gold'
+    matchData.status !== 'SCHEDULED' || matchData.wizardDone ? 'inducements' : 'petty-gold'
   )
   const [homePettyGold,  setHomePettyGold]  = useState(0)
   const [awayPettyGold,  setAwayPettyGold]  = useState(0)
   const [wizardPending,  startWizardTransition] = useTransition()
   const [mercPending,    startMercTransition]   = useTransition()
-  const [induceTab,      setInduceTab]          = useState<'stars' | 'mercs'>('stars')
+  const [induceTabHome,  setInduceTabHome]      = useState<'stars' | 'mercs' | 'items'>('stars')
+  const [induceTabAway,  setInduceTabAway]      = useState<'stars' | 'mercs' | 'items'>('stars')
   const [openSkillKey,   setOpenSkillKey]       = useState<string | null>(null)
 
   // Restore from localStorage after mount
@@ -490,12 +523,12 @@ export default function GameOnClient({ matchData }: Props) {
   }, [state.events, state.mvp, allPlayers])
 
   const homePlaying = useMemo(
-    () => matchData.homeTeam.players.filter((p) => state.lineup.home.includes(p.id)),
-    [matchData.homeTeam.players, state.lineup.home],
+    () => matchData.homeTeam.players.filter((p) => p.status !== 'MNG'),
+    [matchData.homeTeam.players],
   )
   const awayPlaying = useMemo(
-    () => matchData.awayTeam.players.filter((p) => state.lineup.away.includes(p.id)),
-    [matchData.awayTeam.players, state.lineup.away],
+    () => matchData.awayTeam.players.filter((p) => p.status !== 'MNG'),
+    [matchData.awayTeam.players],
   )
   const allPlaying = useMemo(() => [...homePlaying, ...awayPlaying], [homePlaying, awayPlaying])
 
@@ -513,20 +546,54 @@ export default function GameOnClient({ matchData }: Props) {
 
   // ── Phase transitions ─────────────────────────────────────────────────────
 
-  function handleKickOff() {
-    setState((prev) => ({ ...prev, phase: 'live' }))
-    startTransition(async () => {
-      try { await startMatch(matchData.id) } catch {}
-    })
-  }
-
   function handleFullTime() {
     setState((prev) => ({ ...prev, phase: 'postmatch' }))
   }
 
   function handleComplete() {
-    const playerUpdates = computePlayerUpdates(state, allPlayers)
-    const mercIds       = allPlayers.filter((p) => p.isMerc).map((p) => p.id)
+    const allUpdates = computePlayerUpdates(state, allPlayers)
+
+    // Roster players (real TeamPlayer rows): full career-stat increments, as before.
+    const playerUpdates = allUpdates.filter((u) => {
+      const p = playerById.get(u.playerId)
+      return p && !p.isMerc && !p.isJourneyman
+    })
+
+    // Journeymen (MatchJourneyman rows): same full crediting, but persisted on the journeyman
+    // record itself so it can be carried over if the coach signs them to the roster post-match.
+    const journeymanUpdates = allUpdates
+      .filter((u) => playerById.get(u.playerId)?.isJourneyman)
+      .map((u) => ({
+        id:             u.playerId,
+        deltaTouchdowns: u.deltaTouchdowns,
+        deltaCompletePasses: u.deltaCompletePasses,
+        deltaInterceptions: u.deltaInterceptions,
+        deltaCasualties: u.deltaCasualties,
+        deltaMVP:       u.deltaMVP,
+        deltaSSP:       u.deltaSSP,
+        injuryStatus:   u.newStatus ?? 'ACTIVE',
+      }))
+
+    // Mercs/Star Players (MatchMerc/MatchStarPlayer rows): MVP only, per RAW — never skill up.
+    const mercUpdates = allUpdates
+      .filter((u) => { const p = playerById.get(u.playerId); return p?.isMerc && !p.isStarPlayer })
+      .map((u) => ({ id: u.playerId, deltaMVP: u.deltaMVP }))
+    const starUpdates = allUpdates
+      .filter((u) => { const p = playerById.get(u.playerId); return p?.isMerc && p.isStarPlayer })
+      .map((u) => ({ id: u.playerId, deltaMVP: u.deltaMVP }))
+
+    // Per-match stat snapshot for roster players, so it can be shown on the match report
+    // and a player's match history, distinct from their cumulative career totals.
+    const rosterStatRows = playerUpdates.map((u) => ({
+      playerId:       u.playerId,
+      touchdowns:     u.deltaTouchdowns,
+      completePasses: u.deltaCompletePasses,
+      interceptions:  u.deltaInterceptions,
+      casualties:     u.deltaCasualties,
+      mvp:            u.deltaMVP,
+      ssp:            u.deltaSSP,
+    }))
+
     const fd = new FormData()
     fd.set('payload', JSON.stringify({
       matchId:      matchData.id,
@@ -535,7 +602,10 @@ export default function GameOnClient({ matchData }: Props) {
       homeWinnings: state.winnings.home,
       awayWinnings: state.winnings.away,
       playerUpdates,
-      mercIds,
+      journeymanUpdates,
+      mercUpdates,
+      starUpdates,
+      rosterStatRows,
       events:       state.events.map((e) => ({ type: e.type, label: e.label })),
     }))
     localStorage.removeItem(`match-${matchData.id}`)
@@ -558,15 +628,35 @@ export default function GameOnClient({ matchData }: Props) {
     setModal(null)
   }
 
+  function availableMedical(side: 'home' | 'away'): MedicalOption[] {
+    const list: MedicalOption[] = []
+    const hasApoth  = side === 'home' ? matchData.homeHasApothecary  : matchData.awayHasApothecary
+    const apothUsed = side === 'home' ? matchData.homeApothecaryUsed : matchData.awayApothecaryUsed
+    if (hasApoth && !apothUsed) list.push({ kind: 'apothecary', label: 'Team Apothecary' })
+    const purchased = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+    purchased.filter((p) => p.name === 'Wandering Apothecary' && !p.used).forEach((p, i) => list.push({ kind: 'matchInducement', id: p.id, label: `Wandering Apothecary #${i + 1}` }))
+    purchased.filter((p) => p.name === 'Igor' && !p.used).forEach((p, i) => list.push({ kind: 'matchInducement', id: p.id, label: `Igor #${i + 1}` }))
+    return list
+  }
+
   function commitCasualty() {
     if (modal?.type !== 'casualty') return
-    const { attackTeam, attackerId, victimId, result, eventTurn } = modal
+    const { attackTeam, attackerId, victimId, result, eventTurn, medical } = modal
     if (!attackTeam || !attackerId || !victimId || !result || !eventTurn) return
     const attacker = playerById.get(attackerId)!
     const victim   = playerById.get(victimId)!
     const atkTeam  = attackTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
-    const label    = `T${eventTurn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]`
+    const medicalNote = medical ? ` — saved by ${medical.label}` : ''
+    const label    = `T${eventTurn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]${medicalNote}`
     pushEvent({ id: uid(), type: 'CASUALTY', turn: eventTurn, scoringTeam: attackTeam, attackerId, victimId, casualtyResult: result, label })
+    if (medical) {
+      const victimSide = playerTeam.get(victimId)
+      startMercTransition(async () => {
+        if (medical.kind === 'apothecary' && victimSide) await markApothecaryUsed(matchData.id, victimSide)
+        else if (medical.kind === 'matchInducement' && medical.id) await markInducementUsed(matchData.id, medical.id)
+        router.refresh()
+      })
+    }
     setModal(null)
   }
 
@@ -577,6 +667,74 @@ export default function GameOnClient({ matchData }: Props) {
     const p    = playerById.get(playerId)!
     const team = playerTeam.get(playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
     pushEvent({ id: uid(), type: 'INTERCEPTION', turn: eventTurn, interceptorId: playerId, label: `T${eventTurn} · INT · ${playerLabel(p)} (${team})` })
+    setModal(null)
+  }
+
+  function commitWizardEffect(overrideVictims?: { playerId: string; result: CasualtyResult }[]) {
+    if (modal?.type !== 'wizard') return
+    const { side, spell, eventTurn } = modal
+    const victims = overrideVictims ?? modal.victims
+    if (!side || !spell || !eventTurn || victims.length === 0) return
+    const spellName = spell === 'fireball' ? 'Fireball' : 'Lightning Bolt'
+    for (const v of victims) {
+      const victim     = playerById.get(v.playerId)!
+      const victimTeam = playerTeam.get(v.playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+      pushEvent({
+        id: uid(), type: 'CASUALTY', turn: eventTurn, victimId: v.playerId, casualtyResult: v.result,
+        label: `T${eventTurn} · WIZARD · ${spellName} → ${playerLabel(victim)} (${victimTeam}) [${v.result}]`,
+      })
+    }
+    const purchased = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+    const wizardRow = purchased.find((p) => p.name === 'Wizards' && !p.used)
+    if (wizardRow) {
+      startMercTransition(async () => {
+        await markInducementUsed(matchData.id, wizardRow.id)
+        router.refresh()
+      })
+    }
+    setModal(null)
+  }
+
+  function commitSentOff() {
+    if (modal?.type !== 'sentoff') return
+    const { team, playerId, eventTurn, bribeId, outcome } = modal
+    if (!team || !playerId || !eventTurn) return
+    const p        = playerById.get(playerId)!
+    const teamName = team === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    const bribeNote = bribeId
+      ? ` — Bribe ${outcome === 'success' ? 'successful, stays on field' : 'failed, sent off anyway'}`
+      : ''
+    pushEvent({
+      id: uid(), type: 'SENT_OFF', turn: eventTurn,
+      label: `T${eventTurn} · SENT OFF · ${playerLabel(p)} (${teamName})${bribeNote}`,
+    })
+    if (bribeId) {
+      startMercTransition(async () => {
+        await markInducementUsed(matchData.id, bribeId)
+        router.refresh()
+      })
+    }
+    setModal(null)
+  }
+
+  function commitChef() {
+    if (modal?.type !== 'chef') return
+    const { half, side, successes } = modal
+    if (!half || !side || successes === null) return
+    const teamName     = side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    const opponentName = side === 'home' ? matchData.awayTeam.name : matchData.homeTeam.name
+    pushEvent({
+      id: uid(), type: 'CHEF',
+      label: `Half ${half} · 👨‍🍳 Chef — ${teamName} rolled ${successes} success(es): +${successes} re-roll(s) for ${teamName}, -${successes} (or as many as they have) for ${opponentName}`,
+    })
+    const purchased = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+    const chefRow = purchased.find((p) => p.name === 'Halfling Master Chef')
+    if (chefRow) {
+      startMercTransition(async () => {
+        await markInducementUsed(matchData.id, chefRow.id, half)
+        router.refresh()
+      })
+    }
     setModal(null)
   }
 
@@ -644,7 +802,7 @@ export default function GameOnClient({ matchData }: Props) {
   // PHASE 1 — PRE-MATCH WIZARD
   // ─────────────────────────────────────────────────────────────────────────
 
-  if (state.phase === 'prematch' && wizardStep !== 'done') {
+  if (state.phase === 'prematch') {
     const homeBase = matchData.homeTeamValue + homePettyGold / 1000
     const awayBase = matchData.awayTeamValue + awayPettyGold / 1000
     const diff         = Math.abs(homeBase - awayBase)
@@ -652,7 +810,7 @@ export default function GameOnClient({ matchData }: Props) {
     const receivingTeam: 'home' | 'away' | null =
       homeBase < awayBase ? 'home' : awayBase < homeBase ? 'away' : null
 
-    function handleWizardConfirm() {
+    function handleConfirmInducementsAndKickOff() {
       startWizardTransition(async () => {
         await savePrematchData(matchData.id, {
           homeTeamValue:     matchData.homeTeamValue,
@@ -660,7 +818,8 @@ export default function GameOnClient({ matchData }: Props) {
           homeTeamFanFactor: matchData.homeTeamFanFactor,
           awayTeamFanFactor: matchData.awayTeamFanFactor,
         })
-        setWizardStep('done')
+        try { await startMatch(matchData.id) } catch {}
+        setState((prev) => ({ ...prev, phase: 'live' }))
       })
     }
 
@@ -671,7 +830,7 @@ export default function GameOnClient({ matchData }: Props) {
           <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
           <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Wizard</h1>
           <div className="flex gap-2 mt-3">
-            {(['petty-gold', 'inducements'] as const).map((s, i) => (
+            {(['petty-gold', 'lineup', 'inducements'] as const).map((s, i, arr) => (
               <div key={s} className="flex items-center gap-2">
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-heading font-bold border ${
                   wizardStep === s
@@ -679,9 +838,9 @@ export default function GameOnClient({ matchData }: Props) {
                     : 'border-bb-border text-bb-muted'
                 }`}>{i + 1}</div>
                 <span className={`text-xs font-heading uppercase tracking-wider ${wizardStep === s ? 'text-bb-gold' : 'text-bb-muted'}`}>
-                  {s === 'petty-gold' ? 'Petty Gold' : 'Inducements'}
+                  {s === 'petty-gold' ? 'Petty Gold' : s === 'lineup' ? 'Lineup' : 'Inducements'}
                 </span>
-                {i === 0 && <span className="text-bb-border text-xs">›</span>}
+                {i < arr.length - 1 && <span className="text-bb-border text-xs">›</span>}
               </div>
             ))}
           </div>
@@ -754,7 +913,7 @@ export default function GameOnClient({ matchData }: Props) {
             </div>
             <div className="flex justify-end pt-6">
               <button
-                onClick={() => setWizardStep('inducements')}
+                onClick={() => setWizardStep('lineup')}
                 disabled={homePettyGold > matchData.homeTeamTreasury || awayPettyGold > matchData.awayTeamTreasury}
                 className="px-8 py-3 bg-bb-gold hover:bg-bb-gold-dim text-bb-dark font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -764,90 +923,217 @@ export default function GameOnClient({ matchData }: Props) {
           </div>
         )}
 
-        {/* Step 2: Inducements + Basket */}
-        {wizardStep === 'inducements' && (() => {
-          const receivingPlayerTypes = receivingTeam === 'home' ? matchData.homePlayerTypes : receivingTeam === 'away' ? matchData.awayPlayerTypes : []
-          const receivingStarPlayers = receivingTeam === 'home' ? matchData.homeStarPlayers : receivingTeam === 'away' ? matchData.awayStarPlayers : []
-          const receivingTeamName    = receivingTeam === 'home' ? matchData.homeTeam.name : receivingTeam === 'away' ? matchData.awayTeam.name : ''
-          const receivingTV          = receivingTeam === 'home' ? matchData.homeTeamValue  : matchData.awayTeamValue
-          const receivingPlayers     = (receivingTeam === 'home' ? matchData.homeTeam.players : matchData.awayTeam.players)
-          const hiredMercs           = receivingPlayers.filter((p) => p.isMerc && !p.isStarPlayer)
-          const hiredStars           = receivingPlayers.filter((p) => p.isStarPlayer)
-          const hiredStarIds         = new Set(hiredStars.map((p) => p.starPlayerId).filter(Boolean))
-          const spent                = [...hiredMercs, ...hiredStars].reduce((s, p) => s + (p.mercCost ?? 0), 0)
-          const remaining            = inducementGp - spent
-          const mercBaseValue        = hiredMercs.reduce((s, p) => s + ((p.mercCost ?? 0) - 50000), 0)
-          const effectiveTV          = receivingTV + mercBaseValue / 1000
+        {/* Step 2: Lineup */}
+        {wizardStep === 'lineup' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="px-6 pt-5 shrink-0">
+              <p className="text-sm text-bb-muted">
+                Every available player automatically plays — MNG players cannot be fielded and don&apos;t count as active.
+              </p>
+            </div>
 
-          return (
-            <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
-              {/* TV summary bar */}
-              <div className="grid grid-cols-2 gap-3 shrink-0">
-                {(['home', 'away'] as const).map((side) => {
-                  const tv     = side === 'home' ? matchData.homeTeamValue : matchData.awayTeamValue
-                  const petty  = side === 'home' ? homePettyGold : awayPettyGold
-                  const base   = side === 'home' ? homeBase : awayBase
-                  const isRcvr = receivingTeam === side
-                  return (
-                    <div key={side} className={`rounded-sm p-3 border text-sm ${isRcvr ? 'border-bb-crimson/50 bg-bb-crimson/5' : 'border-bb-border/40 bg-bb-darker'}`}>
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="font-heading text-xs font-bold text-bb-gold">{side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name}</span>
-                        {isRcvr && <span className="text-[10px] font-heading text-bb-crimson border border-bb-crimson/40 px-1.5 py-0.5 rounded-sm">RECEIVES</span>}
+            <div className="flex-1 grid grid-cols-2 divide-x divide-bb-border overflow-auto">
+              {(['home', 'away'] as const).map((side) => {
+                const team         = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                const logo         = side === 'home' ? homeLogo : awayLogo
+                const activeCount  = (side === 'home' ? homePlaying : awayPlaying).length
+                const journeyTypes = side === 'home' ? matchData.homeJourneymanTypes : matchData.awayJourneymanTypes
+                const countColor   = activeCount > 16 ? 'text-bb-crimson' : activeCount < 11 ? 'text-amber-400' : 'text-white'
+                return (
+                  <div key={side} className="p-6 flex flex-col gap-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        {logo && (
+                          <button onClick={() => setRosterSide(side)} title="View roster"
+                            className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
+                            <img src={logo} alt={team.raceName} className="w-12 h-12 object-contain opacity-90" />
+                          </button>
+                        )}
+                        <div>
+                          <h2 className="font-heading text-xl font-bold text-bb-gold">{team.name}</h2>
+                          <p className="text-xs text-bb-muted">{team.raceName}</p>
+                        </div>
                       </div>
-                      <span className="font-mono text-bb-muted text-xs">
-                        {tv}k{petty > 0 ? ` + ${(petty/1000).toFixed(1)}k` : ''} = <span className="text-bb-gold font-bold">{base.toFixed(1)}k</span>
-                      </span>
+                      <span className={`text-sm font-mono font-bold ${countColor}`}>{activeCount} / 16 active</span>
                     </div>
-                  )
-                })}
-              </div>
 
-              {receivingTeam === null ? (
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center">
-                    <p className="font-heading text-xl text-bb-gold">⚖ Matched — No Inducements</p>
-                    <p className="text-xs text-bb-muted mt-2">Both teams have equal base values. No inducement gold available.</p>
+                    {activeCount > 16 && (
+                      <p className="text-xs text-bb-crimson bg-bb-crimson/10 border border-bb-crimson/40 rounded-sm px-3 py-2">
+                        Too many active players — a team can field at most 16. Ask your commissioner to adjust player statuses in Data Manager before continuing.
+                      </p>
+                    )}
+
+                    <datalist id={`mng-numbers-${side}`}>
+                      {team.players.filter((p) => p.status === 'MNG').map((p) => (
+                        <option key={p.id} value={p.number}>{p.name ?? p.playerTypeName} (MNG)</option>
+                      ))}
+                    </datalist>
+
+                    <div className="space-y-1">
+                      {team.players.length === 0 && (
+                        <p className="text-bb-muted text-sm italic">No players available.</p>
+                      )}
+                      {team.players.map((p) => (
+                        <div key={p.id}
+                          className={`flex items-center gap-3 p-2 rounded-sm ${p.status === 'MNG' ? 'opacity-40' : ''}`}>
+                          {p.isMerc
+                            ? <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-700/40 px-1.5 py-0.5 rounded-sm font-heading shrink-0">MERC</span>
+                            : p.isJourneyman
+                              ? (
+                                <>
+                                  <span className="text-[10px] bg-teal-900/40 text-teal-300 border border-teal-700/40 px-1.5 py-0.5 rounded-sm font-heading shrink-0">JM</span>
+                                  <input
+                                    type="number" min={1} max={99} list={`mng-numbers-${side}`}
+                                    defaultValue={p.number || ''}
+                                    placeholder="#"
+                                    onBlur={(e) => {
+                                      const n = e.target.value ? parseInt(e.target.value, 10) : null
+                                      startMercTransition(async () => {
+                                        await updateJourneymanNumber(matchData.id, p.id, n)
+                                        router.refresh()
+                                      })
+                                    }}
+                                    className="w-12 bg-bb-darker border border-bb-border rounded-sm px-1.5 py-0.5 text-xs text-white font-mono focus:outline-none focus:border-bb-gold shrink-0"
+                                  />
+                                </>
+                              )
+                              : <span className="text-sm text-bb-muted w-6 font-heading shrink-0">#{p.number}</span>
+                          }
+                          <span className="text-sm text-white flex-1">{p.name ?? p.playerTypeName}</span>
+                          <span className="text-xs text-bb-muted/60 italic">{p.playerTypeName}</span>
+                          {p.status === 'MNG' && (
+                            <span className="text-[10px] bg-amber-900/40 text-amber-400 border border-amber-700/40 px-1.5 py-0.5 rounded-sm font-heading">MNG</span>
+                          )}
+                          {p.isJourneyman && (
+                            <button
+                              disabled={mercPending}
+                              onClick={() => startMercTransition(async () => {
+                                await removeJourneyman(matchData.id, p.id)
+                                router.refresh()
+                              })}
+                              className="shrink-0 w-6 h-6 flex items-center justify-center text-bb-muted hover:text-bb-crimson transition-colors rounded-sm text-sm"
+                            >✕</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {activeCount < 11 && (
+                      <div className="bg-bb-dark border border-bb-gold/30 rounded-sm p-3 mt-auto">
+                        <p className="text-xs font-heading uppercase tracking-wider text-bb-gold mb-2">
+                          Below 11 — hire a free Journeyman
+                        </p>
+                        <div className="space-y-2">
+                          {journeyTypes.map((pt) => (
+                            <div key={pt.id} className="flex items-center justify-between gap-2 text-xs">
+                              <span className="text-white">{pt.name}</span>
+                              <span className="font-mono text-bb-muted">{pt.cost.toLocaleString()} gp</span>
+                              <button
+                                disabled={mercPending}
+                                onClick={() => startMercTransition(async () => {
+                                  await hireJourneyman(matchData.id, side, pt.id)
+                                  router.refresh()
+                                })}
+                                className="px-2.5 py-1 text-[11px] font-heading uppercase tracking-wider rounded-sm border border-bb-gold/60 text-bb-gold hover:bg-bb-gold hover:text-bb-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              >+ Hire Free</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="flex justify-between px-6 py-4 shrink-0">
+              <button
+                onClick={() => setWizardStep('petty-gold')}
+                className="px-6 py-3 border border-bb-border text-bb-muted hover:text-white hover:border-bb-muted rounded-sm font-heading tracking-widest uppercase text-sm transition-colors"
+              >
+                ← Back
+              </button>
+              <button
+                onClick={() => setWizardStep('inducements')}
+                disabled={homePlaying.length > 16 || awayPlaying.length > 16}
+                className="px-8 py-3 bg-bb-gold hover:bg-bb-gold-dim text-bb-dark font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Inducements + Basket */}
+        {wizardStep === 'inducements' && (() => {
+          const homeBudget   = (receivingTeam === 'home' ? inducementGp : 0) + homePettyGold
+          const awayBudget   = (receivingTeam === 'away' ? inducementGp : 0) + awayPettyGold
+          const homeShopping = homeBudget > 0
+          const awayShopping = awayBudget > 0
+          const homeSpent     = matchData.homeTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
+                              + matchData.homeInducementsPurchased.reduce((s, p) => s + p.cost, 0)
+          const awaySpent     = matchData.awayTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
+                              + matchData.awayInducementsPurchased.reduce((s, p) => s + p.cost, 0)
+          const homeRemaining = homeBudget - homeSpent
+          const awayRemaining = awayBudget - awaySpent
+
+          function InducementPanel({ side }: { side: 'home' | 'away' }) {
+            const budget      = side === 'home' ? homeBudget : awayBudget
+            const teamName    = side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+            const tv          = side === 'home' ? matchData.homeTeamValue : matchData.awayTeamValue
+            const playerTypes = side === 'home' ? matchData.homePlayerTypes : matchData.awayPlayerTypes
+            const starPlayers = side === 'home' ? matchData.homeStarPlayers : matchData.awayStarPlayers
+            const players     = side === 'home' ? matchData.homeTeam.players : matchData.awayTeam.players
+            const items       = side === 'home' ? matchData.homeInducementTypes : matchData.awayInducementTypes
+            const purchased   = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+            const tab         = side === 'home' ? induceTabHome : induceTabAway
+            const setTab      = side === 'home' ? setInduceTabHome : setInduceTabAway
+            const hiredMercs  = players.filter((p) => p.isMerc && !p.isStarPlayer)
+            const hiredStars  = players.filter((p) => p.isStarPlayer)
+            const hiredStarIds = new Set(hiredStars.map((p) => p.starPlayerId).filter(Boolean))
+            const spent       = [...hiredMercs, ...hiredStars].reduce((s, p) => s + (p.mercCost ?? 0), 0)
+                              + purchased.reduce((s, p) => s + p.cost, 0)
+            const remaining   = budget - spent
+
+            return (
+              <div className="flex flex-col gap-2">
+                {/* Budget banner */}
+                <div className="bg-bb-dark border border-bb-border rounded-sm px-4 py-2.5 flex items-center justify-between shrink-0">
+                  <div>
+                    <span className="text-xs text-bb-muted font-heading uppercase tracking-wider">Inducement Budget — </span>
+                    <span className="text-xs text-white font-heading">{teamName}</span>
+                  </div>
+                  <div className="flex gap-4 text-xs font-mono">
+                    <span className="text-bb-muted">Budget: <span className="text-white">{budget.toLocaleString()}</span></span>
+                    <span className="text-bb-muted">Spent: <span className="text-bb-crimson">{spent.toLocaleString()}</span></span>
+                    <span className="text-bb-muted">Left: <span className={remaining < 0 ? 'text-bb-crimson' : 'text-bb-gold'}>{remaining.toLocaleString()}</span></span>
                   </div>
                 </div>
-              ) : (
-                <>
-                  {/* Budget banner */}
-                  <div className="bg-bb-dark border border-bb-border rounded-sm px-4 py-2.5 flex items-center justify-between shrink-0">
-                    <div>
-                      <span className="text-xs text-bb-muted font-heading uppercase tracking-wider">Inducement Budget — </span>
-                      <span className="text-xs text-white font-heading">{receivingTeamName}</span>
-                    </div>
-                    <div className="flex gap-4 text-xs font-mono">
-                      <span className="text-bb-muted">Budget: <span className="text-white">{inducementGp.toLocaleString()}</span></span>
-                      <span className="text-bb-muted">Spent: <span className="text-bb-crimson">{spent.toLocaleString()}</span></span>
-                      <span className="text-bb-muted">Left: <span className={remaining < 0 ? 'text-bb-crimson' : 'text-bb-gold'}>{remaining.toLocaleString()}</span></span>
-                    </div>
-                  </div>
 
-                  {/* Pricelist + Basket */}
-                  <div className="flex-1 grid grid-cols-[55%_45%] gap-3 overflow-hidden min-h-0">
+                {/* Pricelist + Basket */}
+                <div className="grid grid-cols-[55%_45%] gap-3 overflow-hidden min-h-[320px]">
                     {/* Pricelist with Stars / Mercs tabs */}
                     <div className="bg-bb-dark border border-bb-border rounded-sm flex flex-col overflow-hidden">
                       {/* Tabs */}
                       <div className="flex border-b border-bb-border shrink-0">
-                        {(['stars', 'mercs'] as const).map((tab) => (
+                        {(['stars', 'mercs', 'items'] as const).map((t) => (
                           <button
-                            key={tab}
-                            onClick={() => setInduceTab(tab)}
+                            key={t}
+                            onClick={() => setTab(t)}
                             className={`flex-1 py-2 text-[11px] font-heading uppercase tracking-wider transition-colors ${
-                              induceTab === tab
+                              tab === t
                                 ? 'text-bb-gold border-b-2 border-bb-gold -mb-px bg-bb-gold/5'
                                 : 'text-bb-muted hover:text-white'
                             }`}
                           >
-                            {tab === 'stars' ? `⭐ Stars (${receivingStarPlayers.length})` : `⚔ Mercs (${receivingPlayerTypes.length})`}
+                            {t === 'stars' ? `⭐ Stars (${starPlayers.length})` : t === 'mercs' ? `⚔ Mercs (${playerTypes.length})` : `🎁 Items (${items.length})`}
                           </button>
                         ))}
                       </div>
 
                       <div className="overflow-y-auto flex-1 divide-y divide-bb-border/30">
                         {/* ── Star Players tab ── */}
-                        {induceTab === 'stars' && receivingStarPlayers.map((sp) => {
+                        {tab === 'stars' && starPlayers.map((sp) => {
                           const alreadyHired = hiredStarIds.has(sp.id)
                           const affordable   = sp.price <= remaining
                           return (
@@ -894,7 +1180,7 @@ export default function GameOnClient({ matchData }: Props) {
                                     onClick={() => {
                                       if (alreadyHired) return
                                       startMercTransition(async () => {
-                                        await hireStarPlayer(matchData.id, receivingTeam!, sp.id, sp.price)
+                                        await hireStarPlayer(matchData.id, side, sp.id, sp.price)
                                         router.refresh()
                                       })
                                     }}
@@ -911,7 +1197,7 @@ export default function GameOnClient({ matchData }: Props) {
                         })}
 
                         {/* ── Mercs tab ── */}
-                        {induceTab === 'mercs' && receivingPlayerTypes.map((pt) => {
+                        {tab === 'mercs' && playerTypes.map((pt) => {
                           const affordable = pt.mercCost <= remaining
                           return (
                             <div key={pt.id} className={`px-4 py-3 ${!affordable ? 'opacity-40' : ''}`}>
@@ -952,7 +1238,48 @@ export default function GameOnClient({ matchData }: Props) {
                                   <button
                                     disabled={!affordable || mercPending}
                                     onClick={() => startMercTransition(async () => {
-                                      await hireMerc(matchData.id, receivingTeam!, pt.id, pt.mercCost)
+                                      await hireMerc(matchData.id, side, pt.id, pt.mercCost)
+                                      router.refresh()
+                                    })}
+                                    className="mt-1.5 px-2.5 py-1 text-[11px] font-heading uppercase tracking-wider rounded-sm border border-bb-gold/60 text-bb-gold hover:bg-bb-gold hover:text-bb-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  >+</button>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+
+                        {/* ── Items tab ── */}
+                        {tab === 'items' && items.map((ind) => {
+                          const boughtCount = purchased.filter((p) => p.inducementId === ind.id).length
+                          const atMax       = boughtCount >= ind.maxCount
+                          const affordable  = ind.price <= remaining
+                          const key         = `${ind.id}||rule`
+                          const isOpen      = openSkillKey === key
+                          return (
+                            <div key={ind.id} className={`px-4 py-3 ${(!affordable || atMax) ? 'opacity-40' : ''}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white font-heading leading-tight">{ind.name}</p>
+                                  <p className="font-mono text-[11px] text-bb-muted mt-0.5">{boughtCount} / {ind.maxCount} purchased</p>
+                                  <button onClick={() => setOpenSkillKey(isOpen ? null : key)} className={`mt-1.5 text-[10px] px-1.5 py-1 rounded-sm border font-heading transition-colors touch-manipulation min-h-[28px] ${
+                                    isOpen
+                                      ? 'border-bb-gold text-bb-gold bg-bb-gold/15'
+                                      : 'bg-bb-gold/10 border-bb-gold/30 text-bb-gold'
+                                  }`}>{isOpen ? 'Hide Rule' : 'View Rule'}</button>
+                                  {isOpen && (
+                                    <div className="mt-1.5 text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2 whitespace-pre-line">
+                                      {ind.rule}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <p className="font-mono text-xs text-white">{ind.price.toLocaleString()}</p>
+                                  <p className="font-mono text-[10px] text-bb-muted">gp</p>
+                                  <button
+                                    disabled={!affordable || atMax || mercPending}
+                                    onClick={() => startMercTransition(async () => {
+                                      await hireInducement(matchData.id, side, ind.id, ind.price)
                                       router.refresh()
                                     })}
                                     className="mt-1.5 px-2.5 py-1 text-[11px] font-heading uppercase tracking-wider rounded-sm border border-bb-gold/60 text-bb-gold hover:bg-bb-gold hover:text-bb-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -971,9 +1298,29 @@ export default function GameOnClient({ matchData }: Props) {
                         <span className="text-xs font-heading uppercase tracking-wider text-bb-gold">Basket</span>
                       </div>
                       <div className="flex-1 overflow-y-auto divide-y divide-bb-border/30">
-                        {hiredMercs.length === 0 && hiredStars.length === 0 && (
+                        {hiredMercs.length === 0 && hiredStars.length === 0 && purchased.length === 0 && (
                           <p className="text-bb-muted text-xs italic px-4 py-4">No inducements hired yet.</p>
                         )}
+                        {/* Generic items */}
+                        {purchased.map((m) => (
+                          <div key={m.id} className="flex items-center justify-between px-4 py-2.5 gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <p className="text-sm text-white truncate">{m.name}</p>
+                                <span className="text-[9px] bg-teal-900/40 text-teal-300 border border-teal-700/40 px-1 py-0.5 rounded-sm font-heading shrink-0">ITEM</span>
+                              </div>
+                              <p className="font-mono text-[11px] text-bb-muted">{m.cost.toLocaleString()} gp</p>
+                            </div>
+                            <button
+                              disabled={mercPending}
+                              onClick={() => startMercTransition(async () => {
+                                await removeInducement(matchData.id, m.id)
+                                router.refresh()
+                              })}
+                              className="shrink-0 w-6 h-6 flex items-center justify-center text-bb-muted hover:text-bb-crimson transition-colors rounded-sm text-sm"
+                            >✕</button>
+                          </div>
+                        ))}
                         {/* Star players */}
                         {hiredStars.map((m) => {
                           const isCompanion = (m.mercCost ?? 0) === 0
@@ -1033,127 +1380,81 @@ export default function GameOnClient({ matchData }: Props) {
                           <span className={`font-mono font-bold ${remaining < 0 ? 'text-bb-crimson' : 'text-bb-gold'}`}>{remaining.toLocaleString()} gp</span>
                         </div>
                         <div className="flex justify-between text-xs pt-1 border-t border-bb-border/40">
-                          <span className="text-bb-muted font-heading uppercase tracking-wider">Effective TV</span>
-                          <span className="font-mono text-white">
-                            {receivingTV}k → <span className="text-bb-gold">{effectiveTV.toFixed(1)}k</span>
-                          </span>
+                          <span className="text-bb-muted font-heading uppercase tracking-wider">Team Value</span>
+                          <span className="font-mono text-bb-gold">{tv}k</span>
                         </div>
                       </div>
                     </div>
                   </div>
-                </>
+              </div>
+            )
+          }
+
+          return (
+            <div className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+              {/* TV summary bar */}
+              <div className="grid grid-cols-2 gap-3 shrink-0">
+                {(['home', 'away'] as const).map((side) => {
+                  const tv       = side === 'home' ? matchData.homeTeamValue : matchData.awayTeamValue
+                  const petty    = side === 'home' ? homePettyGold : awayPettyGold
+                  const base     = side === 'home' ? homeBase : awayBase
+                  const isRcvr   = receivingTeam === side
+                  const isShopper = side === 'home' ? homeShopping : awayShopping
+                  return (
+                    <div key={side} className={`rounded-sm p-3 border text-sm ${isRcvr ? 'border-bb-crimson/50 bg-bb-crimson/5' : 'border-bb-border/40 bg-bb-darker'}`}>
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-heading text-xs font-bold text-bb-gold">{side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name}</span>
+                        <span className="flex gap-1">
+                          {isRcvr && <span className="text-[10px] font-heading text-bb-crimson border border-bb-crimson/40 px-1.5 py-0.5 rounded-sm">RECEIVES</span>}
+                          {!isRcvr && isShopper && <span className="text-[10px] font-heading text-bb-gold border border-bb-gold/40 px-1.5 py-0.5 rounded-sm">+ PETTY CASH SHOPPING</span>}
+                        </span>
+                      </div>
+                      <span className="font-mono text-bb-muted text-xs">
+                        {tv}k{petty > 0 ? ` + ${(petty/1000).toFixed(1)}k` : ''} = <span className="text-bb-gold font-bold">{base.toFixed(1)}k</span>
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {!homeShopping && !awayShopping ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center">
+                    <p className="font-heading text-xl text-bb-gold">⚖ No Inducement Budget</p>
+                    <p className="text-xs text-bb-muted mt-2">Neither team has inducement gold or Petty Cash to spend.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col gap-4 overflow-auto">
+                  {homeShopping && <InducementPanel side="home" />}
+                  {awayShopping && <InducementPanel side="away" />}
+                </div>
+              )}
+
+              {(homePlaying.length > 16 || awayPlaying.length > 16) && (
+                <p className="text-xs text-bb-crimson shrink-0">
+                  A team has more than 16 active players — go back to Lineup and resolve this before kicking off.
+                </p>
               )}
 
               <div className="flex justify-between shrink-0">
                 <button
-                  onClick={() => setWizardStep('petty-gold')}
+                  onClick={() => setWizardStep('lineup')}
                   className="px-6 py-3 border border-bb-border text-bb-muted hover:text-white hover:border-bb-muted rounded-sm font-heading tracking-widest uppercase text-sm transition-colors"
                 >
                   ← Back
                 </button>
                 <button
-                  onClick={handleWizardConfirm}
-                  disabled={wizardPending || remaining < 0}
+                  onClick={handleConfirmInducementsAndKickOff}
+                  disabled={wizardPending || (homeShopping && homeRemaining < 0) || (awayShopping && awayRemaining < 0) || homePlaying.length > 16 || awayPlaying.length > 16}
                   className="px-8 py-3 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-50"
                 >
-                  {wizardPending ? 'Saving…' : 'Confirm & Continue →'}
+                  {wizardPending ? 'Saving…' : '⚔ Confirm & Kick Off!'}
                 </button>
               </div>
             </div>
           )
         })()}
-
-      </div>
-    )
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // PHASE 1 — PRE-MATCH
-  // ─────────────────────────────────────────────────────────────────────────
-
-  if (state.phase === 'prematch') {
-    function togglePlayer(side: 'home' | 'away', playerId: string) {
-      setState((prev) => {
-        const list    = prev.lineup[side]
-        const updated = list.includes(playerId) ? list.filter((id) => id !== playerId) : [...list, playerId]
-        return { ...prev, lineup: { ...prev.lineup, [side]: updated } }
-      })
-    }
-
-    return (
-      <div className="min-h-screen bg-bb-darker text-white flex flex-col">
-        {/* Header */}
-        <div className="bg-bb-dark border-b border-bb-border px-6 py-4 flex items-center justify-between">
-          <div>
-            <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
-            <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Lineup</h1>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-bb-muted">Check players who are playing today.</p>
-            <p className="text-xs text-bb-muted">MNG players are unchecked by default.</p>
-          </div>
-        </div>
-
-        {/* Rosters */}
-        <div className="flex-1 grid grid-cols-2 divide-x divide-bb-border overflow-auto">
-          {(['home', 'away'] as const).map((side) => {
-            const team    = side === 'home' ? matchData.homeTeam : matchData.awayTeam
-            const logo    = side === 'home' ? homeLogo : awayLogo
-            const playing = state.lineup[side]
-            return (
-              <div key={side} className="p-6">
-                <div className="mb-5 flex items-center gap-3">
-                  {logo && (
-                    <button onClick={() => setRosterSide(side)} title="View roster"
-                      className="shrink-0 rounded-sm hover:ring-2 hover:ring-bb-gold/50 transition-all touch-manipulation">
-                      <img src={logo} alt={team.raceName} className="w-12 h-12 object-contain opacity-90" />
-                    </button>
-                  )}
-                  <div>
-                    <h2 className="font-heading text-xl font-bold text-bb-gold">{team.name}</h2>
-                    <p className="text-xs text-bb-muted">{team.raceName}</p>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  {team.players.length === 0 && (
-                    <p className="text-bb-muted text-sm italic">No players available.</p>
-                  )}
-                  {team.players.map((p) => (
-                    <label key={p.id}
-                      className="flex items-center gap-3 p-2 rounded-sm hover:bg-white/5 cursor-pointer group">
-                      <input
-                        type="checkbox"
-                        checked={playing.includes(p.id)}
-                        onChange={() => togglePlayer(side, p.id)}
-                        className="accent-bb-crimson w-4 h-4 shrink-0"
-                      />
-                      {p.isMerc
-                        ? <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-700/40 px-1.5 py-0.5 rounded-sm font-heading shrink-0">MERC</span>
-                        : <span className="text-sm text-bb-muted w-6 font-heading shrink-0">#{p.number}</span>
-                      }
-                      <span className="text-sm text-white flex-1">{p.name ?? p.playerTypeName}</span>
-                      <span className="text-xs text-bb-muted/60 italic">{p.playerTypeName}</span>
-                      {p.status === 'MNG' && (
-                        <span className="text-[10px] bg-amber-900/40 text-amber-400 border border-amber-700/40 px-1.5 py-0.5 rounded-sm font-heading">MNG</span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Footer */}
-        <div className="bg-bb-dark border-t border-bb-border px-6 py-4 flex items-center justify-end gap-4">
-          <span className="text-sm text-bb-muted">
-            {state.lineup.home.length} home · {state.lineup.away.length} away
-          </span>
-          <button onClick={handleKickOff} disabled={isPending}
-            className="px-8 py-3 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-50">
-            ⚔ Kick Off!
-          </button>
-        </div>
 
         {rosterSide && (
           <RosterModal
@@ -1174,6 +1475,11 @@ export default function GameOnClient({ matchData }: Props) {
 
   if (state.phase === 'live') {
     const hasHalftime = state.events.some((e) => e.type === 'HALFTIME')
+
+    const wizardAvailable = [...matchData.homeInducementsPurchased, ...matchData.awayInducementsPurchased]
+      .some((p) => p.name === 'Wizards' && !p.used)
+    const chefAvailable = [...matchData.homeInducementsPurchased, ...matchData.awayInducementsPurchased]
+      .some((p) => p.name === 'Halfling Master Chef' && (!p.chefHalf1Used || !p.chefHalf2Used))
 
     return (
       <div className="min-h-screen bg-bb-darker text-white flex flex-col">
@@ -1242,7 +1548,7 @@ export default function GameOnClient({ matchData }: Props) {
               <span className="text-base">🏈</span> Touchdown
             </button>
 
-            <button onClick={() => setModal({ type: 'casualty', step: 0, eventTurn: null, attackTeam: null, attackerId: null, victimId: null, result: null })}
+            <button onClick={() => setModal({ type: 'casualty', step: 0, eventTurn: null, attackTeam: null, attackerId: null, victimId: null, result: null, medical: null })}
               className={btnCrimson}>
               <span className="text-base">💀</span> Casualty
             </button>
@@ -1252,7 +1558,30 @@ export default function GameOnClient({ matchData }: Props) {
               <span className="text-base">🖐</span> Interception
             </button>
 
+            {wizardAvailable && (
+              <button onClick={() => setModal({ type: 'wizard', step: 0, eventTurn: null, side: null, spell: null, victims: [], pendingPlayerId: null, pendingResult: null })}
+                className={btnGhost + ' text-left'}>
+                <span className="text-base">🧙</span> Wizard
+              </button>
+            )}
+
+            <button onClick={() => setModal({ type: 'sentoff', step: 0, eventTurn: null, team: null, playerId: null, bribeId: null, outcome: null })}
+              className={btnGhost + ' text-left'}>
+              <span className="text-base">🟥</span> Sent Off
+            </button>
+
+            {chefAvailable && (
+              <button onClick={() => setModal({ type: 'chef', half: null, side: null, successes: null })}
+                className={btnGhost + ' text-left'}>
+                <span className="text-base">👨‍🍳</span> Chef
+              </button>
+            )}
+
             <div className="mt-auto space-y-2 pt-4 border-t border-bb-border">
+              <button onClick={() => setModal({ type: 'inducements' })}
+                className={btnGhost + ' w-full justify-center'}>
+                📜 Inducements
+              </button>
               {!hasHalftime && (
                 <button onClick={() => {
                   pushEvent({ id: uid(), type: 'HALFTIME', label: '─── Half Time ───' })
@@ -1487,8 +1816,47 @@ export default function GameOnClient({ matchData }: Props) {
                 </div>
                 <div className="flex justify-between pt-1">
                   <button onClick={() => setModal({ ...modal, step: 3 })} className={btnGhost}>← Back</button>
-                  <button onClick={commitCasualty} disabled={!modal.result}
+                  <button
+                    onClick={() => {
+                      const victimSide = modal.victimId ? playerTeam.get(modal.victimId) : undefined
+                      const medOptions = victimSide ? availableMedical(victimSide) : []
+                      if (medOptions.length > 0) setModal({ ...modal, step: 5 })
+                      else commitCasualty()
+                    }}
+                    disabled={!modal.result}
                     className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    {modal.victimId && availableMedical(playerTeam.get(modal.victimId) ?? 'home').length > 0 ? 'Next →' : 'Confirm'}
+                  </button>
+                </div>
+              </>
+            )}
+            {modal.step === 5 && modal.victimId && (
+              <>
+                <p className="text-bb-muted text-sm">Use medical staff to try to save them?</p>
+                <div className="space-y-2">
+                  <button onClick={() => setModal({ ...modal, medical: null })}
+                    className={`w-full p-3 rounded-sm border text-sm font-heading text-left transition-colors ${
+                      modal.medical === null ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
+                    }`}>
+                    None
+                  </button>
+                  {availableMedical(playerTeam.get(modal.victimId)!).map((opt) => {
+                    const key = opt.id ?? opt.kind
+                    const isSelected = modal.medical?.kind === opt.kind && modal.medical?.id === opt.id
+                    return (
+                      <button key={key} onClick={() => setModal({ ...modal, medical: opt })}
+                        className={`w-full p-3 rounded-sm border text-sm font-heading text-left transition-colors ${
+                          isSelected ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
+                        }`}>
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 4 })} className={btnGhost}>← Back</button>
+                  <button onClick={commitCasualty}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest">
                     Confirm
                   </button>
                 </div>
@@ -1547,6 +1915,359 @@ export default function GameOnClient({ matchData }: Props) {
                   </button>
                 </div>
               </>
+            )}
+          </ModalOverlay>
+        )}
+
+        {/* Wizard Modal */}
+        {modal?.type === 'wizard' && (
+          <ModalOverlay title="Use Wizard" onClose={() => setModal(null)}>
+            {modal.step === 0 && (
+              <>
+                <p className="text-bb-muted text-sm">Which turn is the Wizard casting?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                    <button key={t} onClick={() => setModal({ ...modal, step: 1, eventTurn: t })}
+                      className="py-2 rounded-sm border border-bb-border text-sm font-heading font-bold text-white hover:border-bb-gold hover:bg-bb-gold/10 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {modal.step === 1 && (
+              <>
+                <p className="text-bb-muted text-sm">Which team's Wizard?</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['home', 'away'] as const).map((side) => {
+                    const team      = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    const purchased = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+                    const available = purchased.some((p) => p.name === 'Wizards' && !p.used)
+                    return (
+                      <button key={side} disabled={!available} onClick={() => setModal({ ...modal, step: 2, side })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors text-center disabled:opacity-30 disabled:cursor-not-allowed">
+                        <div className="font-heading font-bold text-white text-sm">{team.name}</div>
+                        <div className="text-xs text-bb-muted mt-1">{available ? 'Wizard available' : 'No Wizard'}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
+              </>
+            )}
+            {modal.step === 2 && (
+              <>
+                <p className="text-bb-muted text-sm">Which spell?</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button onClick={() => setModal({ ...modal, step: 3, spell: 'fireball' })}
+                    className="p-4 border border-bb-border rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors text-center">
+                    <div className="font-heading font-bold text-white text-sm">🔥 Fireball</div>
+                  </button>
+                  <button onClick={() => setModal({ ...modal, step: 3, spell: 'lightning' })}
+                    className="p-4 border border-bb-border rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors text-center">
+                    <div className="font-heading font-bold text-white text-sm">⚡ Lightning Bolt</div>
+                  </button>
+                </div>
+                <button onClick={() => setModal({ ...modal, step: 1 })} className={btnGhost}>← Back</button>
+              </>
+            )}
+            {modal.step === 3 && modal.spell === 'lightning' && (
+              <>
+                <p className="text-bb-muted text-sm">Which player was hit?</p>
+                <select
+                  value={modal.pendingPlayerId ?? ''}
+                  onChange={(e) => setModal({ ...modal, pendingPlayerId: e.target.value })}
+                  className="w-full bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold"
+                >
+                  <option value="">Select player…</option>
+                  {(['home', 'away'] as const).map((side) => {
+                    const team    = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    const players = side === 'home' ? homePlaying : awayPlaying
+                    return (
+                      <optgroup key={side} label={`── ${team.name} ──`}>
+                        {players.map((p) => (<option key={p.id} value={p.id}>{playerLabelFull(p)}</option>))}
+                      </optgroup>
+                    )
+                  })}
+                </select>
+                {modal.pendingPlayerId && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['KO', 'BH', 'MNG', 'DEAD'] as CasualtyResult[]).map((r) => (
+                      <button key={r} onClick={() => setModal({ ...modal, pendingResult: r })}
+                        className={`p-3 rounded-sm border text-sm font-heading font-bold uppercase tracking-wider transition-colors ${
+                          modal.pendingResult === r ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
+                        }`}>
+                        {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : '💀 Dead'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 2 })} className={btnGhost}>← Back</button>
+                  <button
+                    onClick={() => commitWizardEffect([{ playerId: modal.pendingPlayerId!, result: modal.pendingResult! }])}
+                    disabled={!modal.pendingPlayerId || !modal.pendingResult}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Confirm
+                  </button>
+                </div>
+              </>
+            )}
+            {modal.step === 3 && modal.spell === 'fireball' && (
+              <>
+                <p className="text-bb-muted text-sm">Add each player caught in the blast:</p>
+                {modal.victims.length > 0 && (
+                  <div className="space-y-1.5">
+                    {modal.victims.map((v, i) => {
+                      const p    = playerById.get(v.playerId)!
+                      const team = playerTeam.get(v.playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+                      return (
+                        <div key={i} className="flex items-center justify-between gap-2 px-3 py-2 border border-bb-border/50 rounded-sm">
+                          <span className="text-sm text-white">{playerLabel(p)} ({team}) — {v.result}</span>
+                          <button onClick={() => setModal({ ...modal, victims: modal.victims.filter((_, j) => j !== i) })}
+                            className="text-bb-muted hover:text-bb-crimson text-sm">✕</button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                <div className="border-t border-bb-border pt-3 space-y-2">
+                  <select
+                    value={modal.pendingPlayerId ?? ''}
+                    onChange={(e) => setModal({ ...modal, pendingPlayerId: e.target.value })}
+                    className="w-full bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold"
+                  >
+                    <option value="">Add a player…</option>
+                    {(['home', 'away'] as const).map((side) => {
+                      const team    = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                      const players = side === 'home' ? homePlaying : awayPlaying
+                      return (
+                        <optgroup key={side} label={`── ${team.name} ──`}>
+                          {players.map((p) => (<option key={p.id} value={p.id}>{playerLabelFull(p)}</option>))}
+                        </optgroup>
+                      )
+                    })}
+                  </select>
+                  {modal.pendingPlayerId && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['KO', 'BH', 'MNG', 'DEAD'] as CasualtyResult[]).map((r) => (
+                        <button key={r} onClick={() => setModal({ ...modal, pendingResult: r })}
+                          className={`p-3 rounded-sm border text-sm font-heading font-bold uppercase tracking-wider transition-colors ${
+                            modal.pendingResult === r ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
+                          }`}>
+                          {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : '💀 Dead'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    disabled={!modal.pendingPlayerId || !modal.pendingResult}
+                    onClick={() => setModal({
+                      ...modal,
+                      victims: [...modal.victims, { playerId: modal.pendingPlayerId!, result: modal.pendingResult! }],
+                      pendingPlayerId: null, pendingResult: null,
+                    })}
+                    className={btnGhost + ' w-full justify-center disabled:opacity-40'}>
+                    + Add Player
+                  </button>
+                </div>
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 2 })} className={btnGhost}>← Back</button>
+                  <button onClick={() => commitWizardEffect()} disabled={modal.victims.length === 0}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Confirm Spell
+                  </button>
+                </div>
+              </>
+            )}
+          </ModalOverlay>
+        )}
+
+        {/* Sent Off Modal */}
+        {modal?.type === 'sentoff' && (
+          <ModalOverlay title="Record Sent Off" onClose={() => setModal(null)}>
+            {modal.step === 0 && (
+              <>
+                <p className="text-bb-muted text-sm">Which turn was the player sent off?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                    <button key={t} onClick={() => setModal({ ...modal, step: 1, eventTurn: t })}
+                      className="py-2 rounded-sm border border-bb-border text-sm font-heading font-bold text-white hover:border-bb-crimson hover:bg-bb-crimson/10 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {modal.step === 1 && (
+              <>
+                <p className="text-bb-muted text-sm">Which team?</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['home', 'away'] as const).map((side) => {
+                    const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    return (
+                      <button key={side} onClick={() => setModal({ ...modal, team: side })}
+                        className={`p-4 border rounded-sm transition-colors text-center ${modal.team === side ? 'border-bb-crimson bg-bb-crimson/10' : 'border-bb-border hover:border-bb-crimson hover:bg-bb-crimson/5'}`}>
+                        <div className="font-heading font-bold text-white text-sm">{team.name}</div>
+                        <div className="text-xs text-bb-muted mt-1">{team.raceName}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+                {modal.team && (
+                  <SelectPlayer
+                    players={modal.team === 'home' ? homePlaying : awayPlaying}
+                    value={modal.playerId ?? ''}
+                    onChange={(v) => setModal({ ...modal, playerId: v })}
+                    placeholder="Select player…"
+                  />
+                )}
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
+                  <button onClick={() => setModal({ ...modal, step: 2 })} disabled={!modal.team || !modal.playerId}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Next →
+                  </button>
+                </div>
+              </>
+            )}
+            {modal.step === 2 && modal.team && (() => {
+              const purchased = modal.team === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+              const bribes = purchased.filter((p) => p.name === 'Bribes' && !p.used)
+              return (
+                <>
+                  <p className="text-bb-muted text-sm">Use a bribe to try to keep them on the field?</p>
+                  <div className="space-y-2">
+                    <button onClick={() => setModal({ ...modal, bribeId: null, outcome: null })}
+                      className={`w-full p-3 rounded-sm border text-sm font-heading text-left transition-colors ${modal.bribeId === null ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'}`}>
+                      No bribe
+                    </button>
+                    {bribes.length === 0 && (
+                      <p className="text-xs text-bb-muted italic">No unused bribes available for this team.</p>
+                    )}
+                    {bribes.map((b, i) => (
+                      <button key={b.id} onClick={() => setModal({ ...modal, bribeId: b.id })}
+                        className={`w-full p-3 rounded-sm border text-sm font-heading text-left transition-colors ${modal.bribeId === b.id ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'}`}>
+                        Bribe #{i + 1}
+                      </button>
+                    ))}
+                  </div>
+                  {modal.bribeId && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => setModal({ ...modal, outcome: 'success' })}
+                        className={`p-3 rounded-sm border text-xs font-heading uppercase tracking-wider transition-colors ${modal.outcome === 'success' ? 'bg-bb-gold border-bb-gold text-bb-dark' : 'border-bb-border text-bb-muted hover:border-bb-gold hover:text-white'}`}>
+                        Successful
+                      </button>
+                      <button onClick={() => setModal({ ...modal, outcome: 'failed' })}
+                        className={`p-3 rounded-sm border text-xs font-heading uppercase tracking-wider transition-colors ${modal.outcome === 'failed' ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'}`}>
+                        Failed (rolled a 1)
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-1">
+                    <button onClick={() => setModal({ ...modal, step: 1 })} className={btnGhost}>← Back</button>
+                    <button onClick={commitSentOff} disabled={Boolean(modal.bribeId) && !modal.outcome}
+                      className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                      Confirm
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
+          </ModalOverlay>
+        )}
+
+        {/* Chef Modal */}
+        {modal?.type === 'chef' && (
+          <ModalOverlay title="Use Halfling Master Chef" onClose={() => setModal(null)}>
+            {modal.half === null ? (
+              <>
+                <p className="text-bb-muted text-sm">Which team and half?</p>
+                <div className="space-y-2">
+                  {(['home', 'away'] as const).flatMap((side) => {
+                    const team      = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    const purchased = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+                    const chef      = purchased.find((p) => p.name === 'Halfling Master Chef')
+                    if (!chef) return []
+                    return ([1, 2] as const)
+                      .filter((h) => (h === 1 ? !chef.chefHalf1Used : !chef.chefHalf2Used))
+                      .map((h) => (
+                        <button key={`${side}-${h}`} onClick={() => setModal({ ...modal, half: h, side })}
+                          className="w-full p-3 rounded-sm border border-bb-border text-sm font-heading text-left hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors">
+                          {team.name} — Half {h}
+                        </button>
+                      ))
+                  })}
+                </div>
+                {(['home', 'away'] as const).every((side) => {
+                  const purchased = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+                  const chef = purchased.find((p) => p.name === 'Halfling Master Chef')
+                  return !chef || (chef.chefHalf1Used && chef.chefHalf2Used)
+                }) && (
+                  <p className="text-xs text-bb-muted italic">No team has an available, unused Halfling Master Chef for either half.</p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-bb-muted text-sm">How many of the 3 dice rolled 4+?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {[0, 1, 2, 3].map((n) => (
+                    <button key={n} onClick={() => setModal({ ...modal, successes: n })}
+                      className={`p-3 rounded-sm border text-sm font-heading font-bold transition-colors ${
+                        modal.successes === n ? 'bg-bb-gold border-bb-gold text-bb-dark' : 'border-bb-border text-bb-muted hover:border-bb-gold hover:text-white'
+                      }`}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, half: null, side: null })} className={btnGhost}>← Back</button>
+                  <button onClick={commitChef} disabled={modal.successes === null}
+                    className="px-4 py-2 bg-bb-gold text-bb-dark rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Confirm
+                  </button>
+                </div>
+              </>
+            )}
+          </ModalOverlay>
+        )}
+
+        {modal?.type === 'inducements' && (
+          <ModalOverlay title="Purchased Inducements" onClose={() => setModal(null)}>
+            {matchData.homeInducementsPurchased.length === 0 && matchData.awayInducementsPurchased.length === 0 ? (
+              <p className="text-bb-muted text-sm italic">No inducements purchased for this match.</p>
+            ) : (
+              (['home', 'away'] as const).map((side) => {
+                const teamName = side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+                const list     = side === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased
+                if (list.length === 0) return null
+                return (
+                  <div key={side}>
+                    <p className="text-xs font-heading uppercase tracking-wider text-bb-gold mb-2">{teamName}</p>
+                    <div className="space-y-2">
+                      {list.map((ind) => {
+                        const key    = `${ind.id}||live-rule`
+                        const isOpen = openSkillKey === key
+                        return (
+                          <div key={ind.id} className="border border-bb-border/40 rounded-sm px-3 py-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm text-white">{ind.name}</span>
+                              <button onClick={() => setOpenSkillKey(isOpen ? null : key)} className="text-[10px] px-1.5 py-1 rounded-sm border border-bb-gold/30 bg-bb-gold/10 text-bb-gold font-heading">
+                                {isOpen ? 'Hide Rule' : 'View Rule'}
+                              </button>
+                            </div>
+                            {isOpen && (
+                              <div className="mt-1.5 text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2 whitespace-pre-line">
+                                {ind.rule}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })
             )}
           </ModalOverlay>
         )}

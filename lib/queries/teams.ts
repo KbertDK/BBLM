@@ -48,13 +48,48 @@ export async function getTeamById(id: string) {
           playerType: {
             select: {
               name: true, ma: true, st: true, ag: true, av: true, cost: true,
+              skillRollNormal: true, skillRollDouble: true,
               startingSkills: { select: { name: true, category: true, skillRule: true } },
             },
+          },
+          skillRolls:    { where: { consumed: false }, select: { id: true, die1: true, die2: true } },
+          learnedSkills: { select: { id: true, name: true, category: true, skillRule: true } },
+          _count:        { select: { skillRolls: true } },
+          matchStats: {
+            select: {
+              id: true, touchdowns: true, completePasses: true, interceptions: true, casualties: true, mvp: true, ssp: true,
+              match: { select: { id: true, round: true, homeTeam: { select: { name: true } }, awayTeam: { select: { name: true } } } },
+            },
+            orderBy: { createdAt: 'desc' },
           },
         },
         orderBy: { number: 'asc' },
       },
     },
+  })
+}
+
+// Journeymen hired by this team in now-completed matches, not yet signed or fired.
+export async function getPendingJourneymen(teamId: string) {
+  return prisma.matchJourneyman.findMany({
+    where: {
+      resolved: false,
+      OR: [
+        { side: 'home', match: { homeTeamId: teamId, status: 'COMPLETED' } },
+        { side: 'away', match: { awayTeamId: teamId, status: 'COMPLETED' } },
+      ],
+    },
+    include: {
+      playerType: { select: { id: true, name: true, cost: true, ma: true, st: true, ag: true, av: true } },
+      match: {
+        select: {
+          id: true, round: true,
+          homeTeam: { select: { name: true } },
+          awayTeam: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
   })
 }
 

@@ -126,6 +126,64 @@ export async function removeStarPlayer(matchId: string, id: string) {
   revalidatePath(`/matches/${matchId}/game`)
 }
 
+export async function hireJourneyman(matchId: string, side: 'home' | 'away', playerTypeId: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  await prisma.matchJourneyman.create({ data: { matchId, side, playerTypeId } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function removeJourneyman(matchId: string, id: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  await prisma.matchJourneyman.deleteMany({ where: { id, matchId } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function updateJourneymanNumber(matchId: string, journeymanId: string, number: number | null) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  if (number !== null && (number < 1 || number > 99)) return
+  await prisma.matchJourneyman.updateMany({ where: { id: journeymanId, matchId }, data: { number } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function hireInducement(matchId: string, side: 'home' | 'away', inducementId: string, cost: number) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  const inducement = await prisma.mdInducement.findUnique({ where: { id: inducementId } })
+  if (!inducement) return
+  const count = await prisma.matchInducement.count({ where: { matchId, side, inducementId } })
+  if (count >= inducement.maxCount) return
+  await prisma.matchInducement.create({ data: { matchId, side, inducementId, cost } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function removeInducement(matchId: string, id: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  await prisma.matchInducement.deleteMany({ where: { id, matchId } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function markInducementUsed(matchId: string, id: string, half?: 1 | 2) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  const data = half === 1 ? { chefHalf1Used: true } : half === 2 ? { chefHalf2Used: true } : { used: true }
+  await prisma.matchInducement.updateMany({ where: { id, matchId }, data })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function markApothecaryUsed(matchId: string, side: 'home' | 'away') {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  await prisma.match.updateMany({
+    where: { id: matchId },
+    data: side === 'home' ? { homeApothecaryUsed: true } : { awayApothecaryUsed: true },
+  })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
 export async function startMatch(matchId: string) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
@@ -151,6 +209,32 @@ interface PlayerUpdate {
   isDeathPost: boolean
 }
 
+interface JourneymanUpdate {
+  id: string
+  deltaTouchdowns: number
+  deltaCompletePasses: number
+  deltaInterceptions: number
+  deltaCasualties: number
+  deltaMVP: number
+  deltaSSP: number
+  injuryStatus: 'ACTIVE' | 'MNG' | 'DEAD'
+}
+
+interface MercStarUpdate {
+  id: string
+  deltaMVP: number
+}
+
+interface RosterStatRow {
+  playerId: string
+  touchdowns: number
+  completePasses: number
+  interceptions: number
+  casualties: number
+  mvp: number
+  ssp: number
+}
+
 interface EventRecord {
   type:  string
   label: string
@@ -163,8 +247,11 @@ interface CompletePayload {
   homeWinnings: number
   awayWinnings: number
   playerUpdates: PlayerUpdate[]
+  journeymanUpdates: JourneymanUpdate[]
+  mercUpdates: MercStarUpdate[]
+  starUpdates: MercStarUpdate[]
+  rosterStatRows: RosterStatRow[]
   events: EventRecord[]
-  mercIds: string[]
 }
 
 export async function completeMatchFull(formData: FormData) {
@@ -174,8 +261,10 @@ export async function completeMatchFull(formData: FormData) {
   let payload: CompletePayload
   try { payload = JSON.parse(raw) } catch { return }
 
-  const { matchId, homeScore, awayScore, homeWinnings, awayWinnings, events = [], mercIds = [] } = payload
-  const playerUpdates = (payload.playerUpdates ?? []).filter(u => !mercIds.includes(u.playerId))
+  const {
+    matchId, homeScore, awayScore, homeWinnings, awayWinnings, events = [],
+    playerUpdates = [], journeymanUpdates = [], mercUpdates = [], starUpdates = [], rosterStatRows = [],
+  } = payload
 
   const session = await requireMatchParticipant(matchId)
   if (!session) return
@@ -209,6 +298,15 @@ export async function completeMatchFull(formData: FormData) {
     [match.homeTeamId, match.homeTeam.name],
     [match.awayTeamId, match.awayTeam.name],
   ])
+
+  // Players who were already MNG coming into this match have now served their one-match suspension —
+  // clear it unless this match itself just reinjured them (the only MNG left should be from this match).
+  const newMngIds = new Set(playerUpdates.filter((u) => u.newStatus === 'MNG').map((u) => u.playerId))
+  const staleMngPlayers = await prisma.teamPlayer.findMany({
+    where:  { teamId: { in: [match.homeTeamId, match.awayTeamId] }, status: 'MNG' },
+    select: { id: true },
+  })
+  const staleMngIds = staleMngPlayers.map((p) => p.id).filter((id) => !newMngIds.has(id))
 
   await prisma.$transaction([
     prisma.match.update({
@@ -246,6 +344,43 @@ export async function completeMatchFull(formData: FormData) {
       if (u.newStatus !== null) data.status = u.newStatus
       return prisma.teamPlayer.update({ where: { id: u.playerId }, data })
     }),
+    ...(staleMngIds.length > 0
+      ? [prisma.teamPlayer.updateMany({ where: { id: { in: staleMngIds } }, data: { status: 'ACTIVE' } })]
+      : []),
+    ...journeymanUpdates.map((u) => prisma.matchJourneyman.update({
+      where: { id: u.id },
+      data: {
+        touchdowns:     { increment: u.deltaTouchdowns },
+        completePasses: { increment: u.deltaCompletePasses },
+        interceptions:  { increment: u.deltaInterceptions },
+        casualties:     { increment: u.deltaCasualties },
+        mvp:            { increment: u.deltaMVP },
+        ssp:            { increment: u.deltaSSP },
+        injuryStatus:   u.injuryStatus,
+      },
+    })),
+    // RAW: Mercenaries/Star Players only ever earn the MVP award — never skill up.
+    ...mercUpdates.filter((u) => u.deltaMVP > 0).map((u) => prisma.matchMerc.update({
+      where: { id: u.id },
+      data:  { mvp: { increment: u.deltaMVP } },
+    })),
+    ...starUpdates.filter((u) => u.deltaMVP > 0).map((u) => prisma.matchStarPlayer.update({
+      where: { id: u.id },
+      data:  { mvp: { increment: u.deltaMVP } },
+    })),
+    // Per-match stat snapshot (distinct from the cumulative totals above), for match report / player history display.
+    ...rosterStatRows.map((r) => prisma.matchPlayerStat.create({
+      data: {
+        matchId,
+        teamPlayerId:   r.playerId,
+        touchdowns:     r.touchdowns,
+        completePasses: r.completePasses,
+        interceptions:  r.interceptions,
+        casualties:     r.casualties,
+        mvp:            r.mvp,
+        ssp:            r.ssp,
+      },
+    })),
     ...deathIds.map((pid) => {
       const p = playerMap.get(pid)
       const playerName = p?.name?.trim() || 'An unnamed warrior'

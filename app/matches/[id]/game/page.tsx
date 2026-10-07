@@ -8,17 +8,19 @@ interface PageProps {
 }
 
 function computeTV(team: {
-  players:          { value: number }[]
+  players:          { status: string; value: number; playerType: { cost: number } }[]
   rerolls:          number
   race:             { rerollPrice: number }
   assistantCoaches: number
   cheerleaders:     number
   fanFactor:        number
   apothecary:       boolean
-}) {
-  const playerValue = team.players.reduce((s, p) => s + p.value, 0)
+}, extraValue = 0) {
+  const playerValue = team.players
+    .filter((p) => p.status === 'ACTIVE')
+    .reduce((s, p) => s + (p.value > 0 ? p.value : p.playerType.cost), 0)
   return Math.round(
-    (playerValue +
+    (playerValue + extraValue +
       team.rerolls          * team.race.rerollPrice +
       team.assistantCoaches * 10000 +
       team.cheerleaders     * 10000 +
@@ -48,10 +50,10 @@ export default async function GameOnPage({ params }: PageProps) {
             assistantCoaches: true,
             cheerleaders:     true,
             apothecary:       true,
-            race:             { select: { name: true, rerollPrice: true } },
+            race:             { select: { name: true, rerollPrice: true, hasApothecary: true } },
             players: {
               where:   { status: { in: ['ACTIVE', 'MNG'] } },
-              select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
+              select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, maIncrease: true, stIncrease: true, agIncrease: true, avIncrease: true, playerType: { select: { name: true, cost: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
               orderBy: { number: 'asc' },
             },
           },
@@ -68,10 +70,10 @@ export default async function GameOnPage({ params }: PageProps) {
             assistantCoaches: true,
             cheerleaders:     true,
             apothecary:       true,
-            race:             { select: { name: true, rerollPrice: true } },
+            race:             { select: { name: true, rerollPrice: true, hasApothecary: true } },
             players: {
               where:   { status: { in: ['ACTIVE', 'MNG'] } },
-              select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, playerType: { select: { name: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
+              select:  { id: true, number: true, name: true, status: true, ssp: true, value: true, maIncrease: true, stIncrease: true, agIncrease: true, avIncrease: true, playerType: { select: { name: true, cost: true, ma: true, st: true, ag: true, av: true, startingSkills: { select: { name: true, skillRule: true } } } } },
               orderBy: { number: 'asc' },
             },
           },
@@ -120,8 +122,8 @@ export default async function GameOnPage({ params }: PageProps) {
     orderBy: { price: 'asc' as const },
   }
 
-  // Parallel-fetch pricelist player types, mercs, and star players
-  const [homePlayerTypes, awayPlayerTypes, matchMercs, homeStarPlayerRows, awayStarPlayerRows, matchStarRows] = await Promise.all([
+  // Parallel-fetch pricelist player types, mercs, journeymen, star players, and generic inducements
+  const [homePlayerTypes, awayPlayerTypes, matchMercs, matchJourneymen, homeStarPlayerRows, awayStarPlayerRows, matchStarRows, mdInducements, matchInducements] = await Promise.all([
     prisma.playerType.findMany({
       where:   { raceId: match.homeTeam.raceId },
       orderBy: { cost: 'asc' },
@@ -133,6 +135,11 @@ export default async function GameOnPage({ params }: PageProps) {
       include: { startingSkills: { select: { name: true, skillRule: true } } },
     }),
     prisma.matchMerc.findMany({
+      where:   { matchId: id },
+      include: { playerType: { include: { startingSkills: { select: { name: true, skillRule: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.matchJourneyman.findMany({
       where:   { matchId: id },
       include: { playerType: { include: { startingSkills: { select: { name: true, skillRule: true } } } } },
       orderBy: { createdAt: 'asc' },
@@ -156,6 +163,12 @@ export default async function GameOnPage({ params }: PageProps) {
     prisma.matchStarPlayer.findMany({
       where:   { matchId: id },
       include: { starPlayer: { include: { skills: { select: { name: true, skillRule: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.mdInducement.findMany({ orderBy: { price: 'asc' } }),
+    prisma.matchInducement.findMany({
+      where:   { matchId: id },
+      include: { inducement: true },
       orderBy: { createdAt: 'asc' },
     }),
   ])
@@ -260,6 +273,71 @@ export default async function GameOnPage({ params }: PageProps) {
       mercCost:       m.cost,
     }))
 
+  // Synthesise journeyman MatchPlayer objects. RAW (CRP1): journeymen have the Loner skill
+  // while serving — they lose it only once permanently signed to the roster.
+  const homeJourneymanPlayers = matchJourneymen
+    .filter((m) => m.side === 'home')
+    .map((m) => ({
+      id:             m.id,
+      number:         m.number ?? 0,
+      name:           `Journeyman ${m.playerType.name}`,
+      status:         'ACTIVE' as const,
+      playerTypeName: m.playerType.name,
+      ma:             m.playerType.ma,
+      st:             m.playerType.st,
+      ag:             m.playerType.ag,
+      av:             m.playerType.av,
+      ssp:            0,
+      skills:         withLoner(m.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule }))),
+      isMerc:         false,
+      isJourneyman:   true,
+    }))
+
+  const awayJourneymanPlayers = matchJourneymen
+    .filter((m) => m.side === 'away')
+    .map((m) => ({
+      id:             m.id,
+      number:         m.number ?? 0,
+      name:           `Journeyman ${m.playerType.name}`,
+      status:         'ACTIVE' as const,
+      playerTypeName: m.playerType.name,
+      ma:             m.playerType.ma,
+      st:             m.playerType.st,
+      ag:             m.playerType.ag,
+      av:             m.playerType.av,
+      ssp:            0,
+      skills:         withLoner(m.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule }))),
+      isMerc:         false,
+      isJourneyman:   true,
+    }))
+
+  const homeJourneymenValue = matchJourneymen.filter((m) => m.side === 'home').reduce((s, m) => s + m.playerType.cost, 0)
+  const awayJourneymenValue = matchJourneymen.filter((m) => m.side === 'away').reduce((s, m) => s + m.playerType.cost, 0)
+
+  // Mercs/star players count toward Team Value at their base cost (not the +50k mercenary hiring premium)
+  const homeMercsValue = matchMercs.filter((m) => m.side === 'home').reduce((s, m) => s + m.playerType.cost, 0)
+  const awayMercsValue = matchMercs.filter((m) => m.side === 'away').reduce((s, m) => s + m.playerType.cost, 0)
+  const homeStarsValue = matchStarRows.filter((m) => m.side === 'home').reduce((s, m) => s + m.price, 0)
+  const awayStarsValue = matchStarRows.filter((m) => m.side === 'away').reduce((s, m) => s + m.price, 0)
+
+  const homeInducementValue = homeJourneymenValue + homeMercsValue + homeStarsValue
+  const awayInducementValue = awayJourneymenValue + awayMercsValue + awayStarsValue
+
+  // Eligible journeyman positions: the race's basic "filler" position(s), identified by maxCount >= 10
+  const mapJourneymanTypes = (pts: typeof homePlayerTypes) =>
+    pts
+      .filter((pt) => pt.maxCount >= 10)
+      .map((pt) => ({
+        id:     pt.id,
+        name:   pt.name,
+        cost:   pt.cost,
+        ma:     pt.ma,
+        st:     pt.st,
+        ag:     pt.ag,
+        av:     pt.av,
+        skills: pt.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
+      }))
+
   const mapPriceList = (pts: typeof homePlayerTypes) =>
     pts.map((pt) => {
       const skills = pt.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule }))
@@ -276,6 +354,25 @@ export default async function GameOnPage({ params }: PageProps) {
       }
     })
 
+  // Generic (non-player) inducements: Bribes/Chef get a race-specific discount, Igor requires no apothecary access
+  function priceInducements(raceName: string, hasApothecary: boolean) {
+    return mdInducements
+      .filter((ind) => ind.name !== 'Igor' || !hasApothecary)
+      .map((ind) => {
+        let price = ind.price
+        if (ind.name === 'Bribes' && raceName === 'Goblin') price = 50000
+        if (ind.name === 'Halfling Master Chef' && raceName === 'Halfling') price = 100000
+        return { id: ind.id, name: ind.name, maxCount: ind.maxCount, price, rule: ind.rule }
+      })
+  }
+
+  const homeInducementsPurchased = matchInducements
+    .filter((m) => m.side === 'home')
+    .map((m) => ({ id: m.id, inducementId: m.inducementId, name: m.inducement.name, cost: m.cost, rule: m.inducement.rule, used: m.used, chefHalf1Used: m.chefHalf1Used, chefHalf2Used: m.chefHalf2Used }))
+  const awayInducementsPurchased = matchInducements
+    .filter((m) => m.side === 'away')
+    .map((m) => ({ id: m.id, inducementId: m.inducementId, name: m.inducement.name, cost: m.cost, rule: m.inducement.rule, used: m.used, chefHalf1Used: m.chefHalf1Used, chefHalf2Used: m.chefHalf2Used }))
+
   const wizardDone = match.homeTeamValue !== null
 
   const matchData = {
@@ -283,16 +380,26 @@ export default async function GameOnPage({ params }: PageProps) {
     status:            match.status as 'SCHEDULED' | 'LIVE',
     round:             match.round,
     wizardDone,
-    homeTeamValue:     computeTV(match.homeTeam),
-    awayTeamValue:     computeTV(match.awayTeam),
+    homeTeamValue:     computeTV(match.homeTeam, homeInducementValue),
+    awayTeamValue:     computeTV(match.awayTeam, awayInducementValue),
     homeTeamTreasury:  match.homeTeam.treasury,
     awayTeamTreasury:  match.awayTeam.treasury,
     homeTeamFanFactor: match.homeTeam.fanFactor,
     awayTeamFanFactor: match.awayTeam.fanFactor,
     homePlayerTypes:   mapPriceList(homePlayerTypes),
     awayPlayerTypes:   mapPriceList(awayPlayerTypes),
+    homeJourneymanTypes: mapJourneymanTypes(homePlayerTypes),
+    awayJourneymanTypes: mapJourneymanTypes(awayPlayerTypes),
     homeStarPlayers:   mapStarPlayers(homeStarPlayerRows),
     awayStarPlayers:   mapStarPlayers(awayStarPlayerRows),
+    homeInducementTypes: priceInducements(homeRaceName, match.homeTeam.race.hasApothecary),
+    awayInducementTypes: priceInducements(awayRaceName, match.awayTeam.race.hasApothecary),
+    homeInducementsPurchased,
+    awayInducementsPurchased,
+    homeHasApothecary:    match.homeTeam.race.hasApothecary,
+    awayHasApothecary:    match.awayTeam.race.hasApothecary,
+    homeApothecaryUsed:   match.homeApothecaryUsed,
+    awayApothecaryUsed:   match.awayApothecaryUsed,
     homeTeam: {
       id:       match.homeTeam.id,
       name:     match.homeTeam.name,
@@ -305,16 +412,17 @@ export default async function GameOnPage({ params }: PageProps) {
           name:           p.name,
           status:         p.status as 'ACTIVE' | 'MNG',
           playerTypeName: p.playerType.name,
-          ma:             p.playerType.ma,
-          st:             p.playerType.st,
-          ag:             p.playerType.ag,
-          av:             p.playerType.av,
+          ma:             p.playerType.ma + p.maIncrease,
+          st:             p.playerType.st + p.stIncrease,
+          ag:             p.playerType.ag + p.agIncrease,
+          av:             p.playerType.av + p.avIncrease,
           ssp:            p.ssp,
           skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
           isMerc:         false as const,
         })),
         ...homeMercPlayers,
         ...homeStarLinePlayers,
+        ...homeJourneymanPlayers,
       ],
     },
     awayTeam: {
@@ -329,16 +437,17 @@ export default async function GameOnPage({ params }: PageProps) {
           name:           p.name,
           status:         p.status as 'ACTIVE' | 'MNG',
           playerTypeName: p.playerType.name,
-          ma:             p.playerType.ma,
-          st:             p.playerType.st,
-          ag:             p.playerType.ag,
-          av:             p.playerType.av,
+          ma:             p.playerType.ma + p.maIncrease,
+          st:             p.playerType.st + p.stIncrease,
+          ag:             p.playerType.ag + p.agIncrease,
+          av:             p.playerType.av + p.avIncrease,
           ssp:            p.ssp,
           skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
           isMerc:         false as const,
         })),
         ...awayMercPlayers,
         ...awayStarLinePlayers,
+        ...awayJourneymanPlayers,
       ],
     },
   }

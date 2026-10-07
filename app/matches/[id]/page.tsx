@@ -26,6 +26,7 @@ export default async function MatchReportPage({ params }: PageProps) {
   const match = await getMatchReport(id)
 
   if (!match) notFound()
+  const report = match   // re-narrowed binding: TS doesn't carry `match`'s narrowing into nested function closures below
 
   const homeWon = (match.homeScore ?? 0) > (match.awayScore ?? 0)
   const awayWon = (match.awayScore ?? 0) > (match.homeScore ?? 0)
@@ -33,6 +34,42 @@ export default async function MatchReportPage({ params }: PageProps) {
 
   // Split events at half-time
   const halftimeIdx = match.events.findIndex((e) => e.type === 'HALFTIME')
+
+  function sideStats(side: 'home' | 'away') {
+    const teamId = side === 'home' ? report.homeTeam.id : report.awayTeam.id
+    const roster = report.matchPlayerStats
+      .filter((s) => s.teamPlayer.teamId === teamId)
+      .map((s) => ({
+        key: s.id,
+        name: `#${s.teamPlayer.number} ${s.teamPlayer.name ?? s.teamPlayer.playerType.name}`,
+        badge: null as string | null,
+        touchdowns: s.touchdowns, completePasses: s.completePasses, interceptions: s.interceptions,
+        casualties: s.casualties, mvp: s.mvp, ssp: s.ssp,
+      }))
+    const mercs = report.mercs
+      .filter((m) => m.side === side)
+      .map((m) => ({
+        key: m.id, name: m.playerType.name, badge: 'MERC',
+        touchdowns: 0, completePasses: 0, interceptions: 0, casualties: 0, mvp: m.mvp, ssp: m.mvp * 5,
+      }))
+    const stars = report.starPlayers
+      .filter((m) => m.side === side)
+      .map((m) => ({
+        key: m.id, name: m.starPlayer.name, badge: 'STAR',
+        touchdowns: 0, completePasses: 0, interceptions: 0, casualties: 0, mvp: m.mvp, ssp: m.mvp * 5,
+      }))
+    const journeymen = report.journeymen
+      .filter((m) => m.side === side)
+      .map((m) => ({
+        key: m.id, name: m.playerType.name, badge: 'JM',
+        touchdowns: m.touchdowns, completePasses: m.completePasses, interceptions: m.interceptions,
+        casualties: m.casualties, mvp: m.mvp, ssp: m.ssp,
+      }))
+    return [...roster, ...journeymen, ...mercs, ...stars]
+  }
+
+  const homeStats = sideStats('home')
+  const awayStats = sideStats('away')
 
   return (
     <div className="min-h-screen bg-grimdark-gradient">
@@ -143,6 +180,52 @@ export default async function MatchReportPage({ params }: PageProps) {
             </div>
           )}
         </div>
+
+        {/* Player stats */}
+        {(homeStats.length > 0 || awayStats.length > 0) && (
+          <div className="mt-6 grid sm:grid-cols-2 gap-4">
+            {[{ label: match.homeTeam.name, rows: homeStats }, { label: match.awayTeam.name, rows: awayStats }].map(({ label, rows }) => (
+              <div key={label} className="bg-bb-dark border border-bb-border rounded-sm p-4">
+                <h3 className="font-heading text-xs font-bold text-bb-gold uppercase tracking-widest mb-3">{label}</h3>
+                {rows.length === 0 ? (
+                  <p className="text-bb-muted text-xs italic">No individual stats recorded.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-bb-muted/60 font-heading uppercase tracking-wider">
+                          <th className="text-left py-1 pr-2">Player</th>
+                          <th className="text-center py-1 px-1" title="Touchdowns">TD</th>
+                          <th className="text-center py-1 px-1" title="Complete Passes">CP</th>
+                          <th className="text-center py-1 px-1" title="Interceptions">Int</th>
+                          <th className="text-center py-1 px-1" title="Casualties">Cas</th>
+                          <th className="text-center py-1 px-1" title="MVP">MVP</th>
+                          <th className="text-center py-1 pl-1" title="SPP earned this match">SSP</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-bb-border/30">
+                        {rows.map((r) => (
+                          <tr key={r.key}>
+                            <td className="py-1.5 pr-2 text-white">
+                              {r.name}
+                              {r.badge && <span className="ml-1.5 text-[9px] text-bb-muted border border-bb-border/60 px-1 py-0.5 rounded-sm">{r.badge}</span>}
+                            </td>
+                            <td className="text-center py-1.5 px-1 text-bb-gold font-bold tabular-nums">{r.touchdowns}</td>
+                            <td className="text-center py-1.5 px-1 text-bb-muted tabular-nums">{r.completePasses}</td>
+                            <td className="text-center py-1.5 px-1 text-bb-muted tabular-nums">{r.interceptions}</td>
+                            <td className="text-center py-1.5 px-1 text-bb-muted tabular-nums">{r.casualties}</td>
+                            <td className="text-center py-1.5 px-1 text-bb-muted tabular-nums">{r.mvp}</td>
+                            <td className="text-center py-1.5 pl-1 text-bb-muted tabular-nums">{r.ssp}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Team links */}
         <div className="mt-6 flex gap-3 justify-center text-xs font-heading uppercase tracking-widest">

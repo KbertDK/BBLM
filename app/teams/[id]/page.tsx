@@ -1,13 +1,15 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { getTeamById } from '@/lib/queries/teams'
+import { getTeamById, getPendingJourneymen } from '@/lib/queries/teams'
 import { getSession } from '@/lib/auth'
 import { updatePlayer, updateTeamInfo, deleteTeam, deactivateTeam, activateTeam, assignTeam,
-         buyPlayer, sackPlayer, reinstatePlayer, appendTeamNewsNote, createTeamNewsPost } from './actions'
+         buyPlayer, sackPlayer, reinstatePlayer, appendTeamNewsNote, createTeamNewsPost,
+         recordSkillRoll, pickSkill, pickStatIncrease, signJourneyman, fireJourneyman } from './actions'
 import { getRaceLogo } from '@/lib/race-logo'
 import prisma from '@/lib/prisma'
 import { getTeamNews } from '@/lib/queries/news'
+import { skillRollsAvailable, improvementOptions, canIncreaseStat } from '@/lib/ssp'
 
 export const dynamic = 'force-dynamic'
 
@@ -131,6 +133,8 @@ export default async function TeamPage({ params, searchParams }: Props) {
 
   let playerTypes: { id: string; name: string; cost: number; maxCount: number }[] = []
   let teamNews: Awaited<ReturnType<typeof getTeamNews>> = []
+  let allSkills: { id: string; name: string; category: string }[] = []
+  let pendingJourneymen: Awaited<ReturnType<typeof getPendingJourneymen>> = []
 
   if (tab === 'roster') {
     playerTypes = await prisma.playerType.findMany({
@@ -138,6 +142,21 @@ export default async function TeamPage({ params, searchParams }: Props) {
       orderBy: { cost: 'asc' },
       select:  { id: true, name: true, cost: true, maxCount: true },
     })
+    if (isOwner) {
+      ;[allSkills, pendingJourneymen] = await Promise.all([
+        prisma.skill.findMany({
+          orderBy: { name: 'asc' },
+          select:  { id: true, name: true, category: true },
+        }),
+        getPendingJourneymen(team.id),
+      ])
+    }
+  }
+
+  function skillsForRoll(skillRollNormal: string, skillRollDouble: string, isDouble: boolean) {
+    const categories = new Set(skillRollNormal.split(''))
+    if (isDouble) skillRollDouble.split('').forEach((c) => categories.add(c))
+    return allSkills.filter((s) => categories.has(s.category))
   }
 
   if (tab === 'news') {
@@ -435,6 +454,46 @@ export default async function TeamPage({ params, searchParams }: Props) {
               )}
             </section>
 
+            {/* Pending Journeymen */}
+            {isOwner && pendingJourneymen.length > 0 && (
+              <section className="mb-14">
+                <SectionRule title="Pending Journeymen" right={`${pendingJourneymen.length}`} />
+                <div className="space-y-2">
+                  {pendingJourneymen.map((j) => (
+                    <div key={j.id} className="bg-bb-dark border border-bb-gold/20 rounded-sm p-4 flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-sm text-white font-heading">
+                          {j.playerType.name} <span className="text-bb-muted">— Round {j.match.round}, {j.match.homeTeam.name} v {j.match.awayTeam.name}</span>
+                        </p>
+                        <p className="text-xs text-bb-muted mt-1">
+                          TD {j.touchdowns} · CP {j.completePasses} · Int {j.interceptions} · Cas {j.casualties} · MVP {j.mvp} · SSP {j.ssp}
+                          {j.injuryStatus !== 'ACTIVE' && <span className="ml-2 text-amber-400">({j.injuryStatus})</span>}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {j.injuryStatus !== 'DEAD' && (
+                          <form action={signJourneyman}>
+                            <input type="hidden" name="journeymanId" value={j.id} />
+                            <button type="submit"
+                              className="px-3 py-1.5 rounded-sm border border-bb-gold/50 text-bb-gold text-xs font-heading uppercase tracking-wider hover:bg-bb-gold hover:text-bb-dark transition-colors">
+                              Sign ({j.playerType.cost.toLocaleString()} gp)
+                            </button>
+                          </form>
+                        )}
+                        <form action={fireJourneyman}>
+                          <input type="hidden" name="journeymanId" value={j.id} />
+                          <button type="submit"
+                            className="px-3 py-1.5 rounded-sm border border-bb-border text-bb-muted text-xs font-heading uppercase tracking-wider hover:border-bb-crimson hover:text-bb-crimson transition-colors">
+                            Fire
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {/* Roster table */}
             <section className="mb-14">
               <SectionRule title="Roster" right={`${living.length} / ${maxSlots} slots`} />
@@ -485,22 +544,119 @@ export default async function TeamPage({ params, searchParams }: Props) {
                           )}
                         </td>
                         <td className="px-3 py-3.5 text-sm text-bb-muted">{player.playerType.name}</td>
-                        <StatCell value={player.playerType.ma} />
-                        <StatCell value={player.playerType.st} />
-                        <StatCell value={player.playerType.ag} />
-                        <StatCell value={player.playerType.av} />
+                        <StatCell value={player.playerType.ma + player.maIncrease} />
+                        <StatCell value={player.playerType.st + player.stIncrease} />
+                        <StatCell value={player.playerType.ag + player.agIncrease} />
+                        <StatCell value={player.playerType.av + player.avIncrease} />
                         <td className="px-3 py-3.5">
                           <div className="flex flex-wrap gap-1">
-                            {player.playerType.startingSkills.length === 0 ? (
+                            {[...player.playerType.startingSkills, ...player.learnedSkills].length === 0 ? (
                               <span className="text-bb-muted/30 text-xs">—</span>
                             ) : (
-                              player.playerType.startingSkills.map((s) => (
+                              [...player.playerType.startingSkills, ...player.learnedSkills].map((s) => (
                                 <span key={s.name} title={s.skillRule} className={`text-xs px-1.5 py-0.5 rounded-sm border cursor-help ${CAT_COLOR[s.category] ?? ''}`}>
                                   {s.name}
                                 </span>
                               ))
                             )}
                           </div>
+                          {isOwner && (
+                            <div className="mt-1.5 space-y-1">
+                              {skillRollsAvailable(player.ssp, player._count.skillRolls) > 0 && (
+                                <details className="text-xs">
+                                  <summary className="cursor-pointer text-bb-gold hover:text-bb-gold-dim font-heading uppercase tracking-wider text-[10px]">
+                                    🎲 Skill Up
+                                  </summary>
+                                  <form action={recordSkillRoll} className="mt-1 flex items-center gap-1 flex-wrap">
+                                    <input type="hidden" name="playerId" value={player.id} />
+                                    <select name="die1" defaultValue="" required
+                                      className="bg-bb-darker border border-bb-border rounded-sm px-1 py-0.5 text-xs text-white">
+                                      <option value="" disabled>D1</option>
+                                      {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                                    </select>
+                                    <span className="text-bb-muted">+</span>
+                                    <select name="die2" defaultValue="" required
+                                      className="bg-bb-darker border border-bb-border rounded-sm px-1 py-0.5 text-xs text-white">
+                                      <option value="" disabled>D2</option>
+                                      {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                                    </select>
+                                    <button type="submit"
+                                      className="px-2 py-0.5 rounded-sm border border-bb-gold/50 text-bb-gold text-[10px] font-heading uppercase hover:bg-bb-gold hover:text-bb-dark transition-colors">
+                                      Roll
+                                    </button>
+                                  </form>
+                                </details>
+                              )}
+                              {player.skillRolls.map((roll) => {
+                                const isDouble = roll.die1 === roll.die2
+                                const options  = skillsForRoll(player.playerType.skillRollNormal, player.playerType.skillRollDouble, isDouble)
+                                const { statOptions } = improvementOptions(roll.die1, roll.die2)
+                                const statBase: Record<string, number> = {
+                                  MA: player.playerType.ma, ST: player.playerType.st, AG: player.playerType.ag, AV: player.playerType.av,
+                                }
+                                const statCurrent: Record<string, number> = {
+                                  MA: player.maIncrease, ST: player.stIncrease, AG: player.agIncrease, AV: player.avIncrease,
+                                }
+                                const availableStatOptions = statOptions.filter((s) => canIncreaseStat(statBase[s], statCurrent[s]))
+                                return (
+                                  <details key={roll.id} className="text-xs">
+                                    <summary className="cursor-pointer text-bb-gold hover:text-bb-gold-dim font-heading uppercase tracking-wider text-[10px]">
+                                      🎯 Pick Skill ({roll.die1}+{roll.die2}{isDouble ? ', doubles!' : ''})
+                                    </summary>
+                                    <form action={pickSkill} className="mt-1 flex items-center gap-1">
+                                      <input type="hidden" name="rollId" value={roll.id} />
+                                      <select name="skillId" defaultValue="" required
+                                        className="bg-bb-darker border border-bb-border rounded-sm px-1 py-0.5 text-xs text-white max-w-[10rem]">
+                                        <option value="" disabled>Select skill…</option>
+                                        {(['G', 'A', 'P', 'S', 'M', 'E'] as const).map((cat) => {
+                                          const inCat = options.filter((s) => s.category === cat)
+                                          if (inCat.length === 0) return null
+                                          return (
+                                            <optgroup key={cat} label={cat}>
+                                              {inCat.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                            </optgroup>
+                                          )
+                                        })}
+                                      </select>
+                                      <button type="submit"
+                                        className="px-2 py-0.5 rounded-sm border border-bb-gold/50 text-bb-gold text-[10px] font-heading uppercase hover:bg-bb-gold hover:text-bb-dark transition-colors">
+                                        Learn
+                                      </button>
+                                    </form>
+                                    {availableStatOptions.length > 0 && (
+                                      <form action={pickStatIncrease} className="mt-1 flex items-center gap-1">
+                                        <input type="hidden" name="rollId" value={roll.id} />
+                                        <span className="text-bb-muted">or</span>
+                                        <select name="stat" defaultValue="" required
+                                          className="bg-bb-darker border border-bb-border rounded-sm px-1 py-0.5 text-xs text-white">
+                                          <option value="" disabled>Stat…</option>
+                                          {availableStatOptions.map((s) => <option key={s} value={s}>+1 {s}</option>)}
+                                        </select>
+                                        <button type="submit"
+                                          className="px-2 py-0.5 rounded-sm border border-bb-gold/50 text-bb-gold text-[10px] font-heading uppercase hover:bg-bb-gold hover:text-bb-dark transition-colors">
+                                          Increase
+                                        </button>
+                                      </form>
+                                    )}
+                                  </details>
+                                )
+                              })}
+                              {player.matchStats.length > 0 && (
+                                <details className="text-xs">
+                                  <summary className="cursor-pointer text-bb-muted hover:text-white font-heading uppercase tracking-wider text-[10px]">
+                                    📋 Match History ({player.matchStats.length})
+                                  </summary>
+                                  <div className="mt-1 space-y-0.5">
+                                    {player.matchStats.map((m) => (
+                                      <div key={m.id} className="text-[10px] text-bb-muted">
+                                        R{m.match.round} {m.match.homeTeam.name} v {m.match.awayTeam.name}: TD {m.touchdowns} · CP {m.completePasses} · Int {m.interceptions} · Cas {m.casualties} · MVP {m.mvp} · SSP {m.ssp}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="px-2 py-3.5 text-center text-sm text-bb-muted tabular-nums">{player.completePasses}</td>
                         <td className="px-2 py-3.5 text-center text-sm font-bold text-bb-gold tabular-nums">{player.touchdowns}</td>
@@ -730,10 +886,10 @@ export default async function TeamPage({ params, searchParams }: Props) {
                             {player.name ?? <span className="no-underline italic font-normal">—</span>}
                           </td>
                           <td className="px-3 py-3.5 text-sm text-bb-muted/60">{player.playerType.name}</td>
-                          <StatCell value={player.playerType.ma} muted />
-                          <StatCell value={player.playerType.st} muted />
-                          <StatCell value={player.playerType.ag} muted />
-                          <StatCell value={player.playerType.av} muted />
+                          <StatCell value={player.playerType.ma + player.maIncrease} muted />
+                          <StatCell value={player.playerType.st + player.stIncrease} muted />
+                          <StatCell value={player.playerType.ag + player.agIncrease} muted />
+                          <StatCell value={player.playerType.av + player.avIncrease} muted />
                           <td className="px-3 py-3.5">
                             <div className="flex flex-wrap gap-1 opacity-40">
                               {player.playerType.startingSkills.map((s) => (
