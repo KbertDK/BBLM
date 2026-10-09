@@ -14,6 +14,7 @@ export async function createMatch(formData: FormData) {
   if (!await requireCommish()) return
 
   const leagueId     = formData.get('leagueId')     as string
+  const seasonId     = (formData.get('seasonId')     as string) || null
   const tournamentId = (formData.get('tournamentId') as string) || null
   const homeTeamId   = formData.get('homeTeamId')   as string
   const awayTeamId   = formData.get('awayTeamId')   as string
@@ -46,7 +47,7 @@ export async function createMatch(formData: FormData) {
   if (conflict) return
 
   await prisma.match.create({
-    data: { leagueId, tournamentId, homeTeamId, awayTeamId, round, scheduledAt, status: 'SCHEDULED' },
+    data: { leagueId, seasonId, tournamentId, homeTeamId, awayTeamId, round, scheduledAt, status: 'SCHEDULED' },
   })
 
   revalidatePath('/league-management')
@@ -145,6 +146,7 @@ export async function generateRoundRobin(formData: FormData) {
   if (!await requireCommish()) return
 
   const leagueId     = formData.get('leagueId')     as string
+  const seasonId     = (formData.get('seasonId')     as string) || null
   const divisionId   = formData.get('divisionId')   as string
   const tournamentId = (formData.get('tournamentId') as string) || null
   const startRound   = parseInt((formData.get('startRound') as string) ?? '1', 10)
@@ -177,13 +179,13 @@ export async function generateRoundRobin(formData: FormData) {
     teamRounds.get(m.awayTeamId)!.add(m.round)
   }
 
-  const toCreate: { leagueId: string; tournamentId: string; homeTeamId: string; awayTeamId: string; round: number; status: 'SCHEDULED' }[] = []
+  const toCreate: { leagueId: string; seasonId: string | null; tournamentId: string; homeTeamId: string; awayTeamId: string; round: number; status: 'SCHEDULED' }[] = []
 
   for (let ri = 0; ri < schedule.length; ri++) {
     const round = startRound + ri
     for (const [h, a] of schedule[ri]) {
       if (teamRounds.get(h)?.has(round) || teamRounds.get(a)?.has(round)) continue
-      toCreate.push({ leagueId, tournamentId, homeTeamId: h, awayTeamId: a, round, status: 'SCHEDULED' })
+      toCreate.push({ leagueId, seasonId, tournamentId, homeTeamId: h, awayTeamId: a, round, status: 'SCHEDULED' })
     }
   }
 

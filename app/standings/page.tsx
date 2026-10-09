@@ -6,17 +6,19 @@ import clsx from 'clsx'
 
 export const revalidate = 60
 
-type Props = { searchParams: Promise<{ leagueId?: string; divisionId?: string }> }
+type Props = { searchParams: Promise<{ leagueId?: string; seasonId?: string; divisionId?: string }> }
 
-const STATUS_CLS: Record<string, string> = {
-  ACTIVE: 'text-bb-gold border-bb-gold/40 bg-bb-gold/5',
-  READY:  'text-green-400 border-green-700/50 bg-green-900/10',
-  ENDED:  'text-bb-muted border-bb-muted/30 bg-bb-muted/5',
+const SEASON_STATUS_CLS: Record<string, string> = {
+  PLANNING: 'text-bb-muted border-bb-muted/30 bg-bb-muted/5',
+  ACTIVE:   'text-bb-gold border-bb-gold/40 bg-bb-gold/5',
+  READY:    'text-green-400 border-green-700/50 bg-green-900/10',
+  ENDED:    'text-bb-muted border-bb-muted/30 bg-bb-muted/5',
 }
-const STATUS_LABEL: Record<string, string> = {
-  ACTIVE: 'Active',
-  READY:  'Ready',
-  ENDED:  'Ended',
+const SEASON_STATUS_LABEL: Record<string, string> = {
+  PLANNING: 'Planning',
+  ACTIVE:   'Active',
+  READY:    'Ready',
+  ENDED:    'Ended',
 }
 
 // Tiebreak: pts → wins → draws → fewest losses
@@ -59,16 +61,18 @@ interface TournamentGroup {
   teams: TeamRow[]
 }
 
-interface LeagueBlock {
-  id: string
-  name: string
-  season: number
-  status: string
-  pointsWin: number
-  pointsDraw: number
-  pointsLoss: number
+interface SeasonBlock {
+  seasonId:     string
+  seasonName:   string
+  leagueId:     string
+  leagueName:   string
+  season:       number
+  status:       string
+  pointsWin:    number
+  pointsDraw:   number
+  pointsLoss:   number
   tournamentGroups: TournamentGroup[]
-  ungroupedTeams: TeamRow[]
+  ungroupedTeams:   TeamRow[]
 }
 
 function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
@@ -138,8 +142,8 @@ function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
   )
 }
 
-function StandingsTable({ league }: { league: LeagueBlock }) {
-  const { pointsWin, pointsDraw, pointsLoss, tournamentGroups, ungroupedTeams } = league
+function StandingsTable({ block }: { block: SeasonBlock }) {
+  const { pointsWin, pointsDraw, pointsLoss, tournamentGroups, ungroupedTeams } = block
   const hasGroups = tournamentGroups.length > 0
 
   return (
@@ -184,7 +188,7 @@ function StandingsTable({ league }: { league: LeagueBlock }) {
 }
 
 export default async function StandingsPage({ searchParams }: Props) {
-  const { leagueId, divisionId } = await searchParams
+  const { leagueId, seasonId, divisionId } = await searchParams
 
   // Default to the user's primary league when no league is selected
   if (!leagueId) {
@@ -200,60 +204,78 @@ export default async function StandingsPage({ searchParams }: Props) {
     }
   }
 
+  // Load all leagues (for the filter pill list)
   const allLeagues = await prisma.league.findMany({
     where:   { isHidden: false },
-    orderBy: [{ status: 'asc' }, { season: 'desc' }, { name: 'asc' }],
+    orderBy: { name: 'asc' },
     select:  {
-      id: true, name: true, season: true, status: true,
+      id: true, name: true,
       ruleSet: { select: { pointsWin: true, pointsDraw: true, pointsLoss: true } },
+      seasons: {
+        select: { id: true, name: true, season: true, status: true },
+        orderBy: { season: 'desc' },
+      },
     },
   })
 
-  const activeLeagues = allLeagues.filter((l) => l.status === 'ACTIVE' || l.status === 'READY')
-  const endedLeagues  = allLeagues.filter((l) => l.status === 'ENDED')
+  // All seasons across all leagues (flat list for standings)
+  const allSeasons = allLeagues.flatMap((l) =>
+    l.seasons.map((s) => ({ ...s, leagueId: l.id, leagueName: l.name, ruleSet: l.ruleSet }))
+  )
 
-  const targetLeagues = leagueId
-    ? allLeagues.filter((l) => l.id === leagueId)
-    : activeLeagues
+  const activeSeasons = allSeasons.filter((s) => s.status === 'ACTIVE' || s.status === 'READY')
+  const endedSeasons  = allSeasons.filter((s) => s.status === 'ENDED')
 
-  // Divisions for the selected league — used for the division filter UI
-  const selectedLeagueDivisions = leagueId
+  // Seasons to display: if specific seasonId → just that one; if leagueId → all active seasons in that league; else all active
+  const targetSeasons = seasonId
+    ? allSeasons.filter((s) => s.id === seasonId)
+    : leagueId
+    ? activeSeasons.filter((s) => s.leagueId === leagueId)
+    : activeSeasons
+
+  // Divisions for the selected season/league — for the division filter pills
+  const selectedLeagueDivisions = (leagueId || seasonId)
     ? await prisma.division.findMany({
-        where:   { leagueId, isHidden: false },
+        where: {
+          isHidden: false,
+          ...(seasonId ? { seasonId } : { season: { leagueId } }),
+        },
         orderBy: { name: 'asc' },
-        select:  { id: true, name: true },
+        select:  { id: true, name: true, seasonId: true },
       })
     : []
 
-  const leagueIds = targetLeagues.map((l) => l.id)
+  const targetSeasonIds = targetSeasons.map((s) => s.id)
+  const targetLeagueIds = [...new Set(targetSeasons.map((s) => s.leagueId))]
 
-  // Prisma returns [] automatically when `in: []`, so no need to guard
-  const [teams, tournaments] = await Promise.all([
-    prisma.team.findMany({
-      where:   {
-        leagueId:            { in: leagueIds },
-        ...(divisionId ? { divisionId } : {}),
+  // Teams in these leagues (scoped by divisionId filter if set)
+  const teams = await prisma.team.findMany({
+    where: {
+      leagueId: { in: targetLeagueIds },
+      ...(divisionId ? { divisionId } : {}),
+    },
+    include: {
+      race:    { select: { name: true, rerollPrice: true } },
+      coach:   { select: { name: true, alias: true } },
+      players: {
+        where:  { status: { in: ['ACTIVE', 'MNG'] } },
+        select: { value: true, playerType: { select: { cost: true } } },
       },
-      include: {
-        race:    { select: { name: true, rerollPrice: true } },
-        coach:   { select: { name: true, alias: true } },
-        players: {
-          where:  { status: { in: ['ACTIVE', 'MNG'] } },
-          select: { value: true, playerType: { select: { cost: true } } },
-        },
-      },
-      orderBy: { name: 'asc' },
-    }),
-    prisma.tournament.findMany({
-      where:   { divisions: { some: { leagueId: { in: leagueIds } } } },
-      include: { divisions: { select: { id: true, leagueId: true } } },
-      orderBy: { name: 'asc' },
-    }),
-  ])
+    },
+    orderBy: { name: 'asc' },
+  })
 
-  const leagueBlocks: LeagueBlock[] = targetLeagues.map((league) => {
-    const leagueTeams: TeamRow[] = teams
-      .filter((t) => t.leagueId === league.id)
+  // Tournaments linked to divisions in target seasons
+  const tournaments = await prisma.tournament.findMany({
+    where:   { divisions: { some: { season: { leagueId: { in: targetLeagueIds } } } } },
+    include: { divisions: { select: { id: true, seasonId: true } } },
+    orderBy: { name: 'asc' },
+  })
+
+  const seasonBlocks: SeasonBlock[] = targetSeasons.map((season) => {
+    const league = allLeagues.find((l) => l.id === season.leagueId)!
+    const seasonTeams: TeamRow[] = teams
+      .filter((t) => t.leagueId === season.leagueId)
       .map((t) => {
         const playerValue = t.players.reduce((s, p) => s + (p.value > 0 ? p.value : p.playerType.cost), 0)
         const teamValue   = Math.round(
@@ -278,34 +300,36 @@ export default async function StandingsPage({ searchParams }: Props) {
         }
       })
 
-    const leagueTournaments = tournaments.filter(
-      (t) => t.divisions.some((d) => d.leagueId === league.id)
+    const seasonTournaments = tournaments.filter(
+      (t) => t.divisions.some((d) => d.seasonId === season.id)
     )
 
-    const tournamentGroups: TournamentGroup[] = leagueTournaments.map((tournament) => {
+    const tournamentGroups: TournamentGroup[] = seasonTournaments.map((tournament) => {
       const divisionIds = new Set(
         tournament.divisions
-          .filter((d) => d.leagueId === league.id)
+          .filter((d) => d.seasonId === season.id)
           .map((d) => d.id)
       )
       return {
         id:    tournament.id,
         name:  tournament.name,
-        teams: leagueTeams.filter((t) => t.divisionId != null && divisionIds.has(t.divisionId)),
+        teams: seasonTeams.filter((t) => t.divisionId != null && divisionIds.has(t.divisionId)),
       }
     })
 
-    const assignedIds   = new Set(tournamentGroups.flatMap((g) => g.teams.map((t) => t.id)))
-    const ungroupedTeams = leagueTeams.filter((t) => !assignedIds.has(t.id))
+    const assignedIds    = new Set(tournamentGroups.flatMap((g) => g.teams.map((t) => t.id)))
+    const ungroupedTeams = seasonTeams.filter((t) => !assignedIds.has(t.id))
 
     return {
-      id:               league.id,
-      name:             league.name,
-      season:           league.season,
-      status:           league.status,
-      pointsWin:        league.ruleSet?.pointsWin  ?? 3,
-      pointsDraw:       league.ruleSet?.pointsDraw ?? 1,
-      pointsLoss:       league.ruleSet?.pointsLoss ?? 0,
+      seasonId:   season.id,
+      seasonName: season.name,
+      leagueId:   season.leagueId,
+      leagueName: season.leagueName,
+      season:     season.season,
+      status:     season.status,
+      pointsWin:  league.ruleSet?.pointsWin  ?? 3,
+      pointsDraw: league.ruleSet?.pointsDraw ?? 1,
+      pointsLoss: league.ruleSet?.pointsLoss ?? 0,
       tournamentGroups,
       ungroupedTeams,
     }
@@ -334,9 +358,9 @@ export default async function StandingsPage({ searchParams }: Props) {
         {/* ── League filter pills ────────────────────────────────────── */}
         {allLeagues.length > 0 && (
           <div className="mb-4">
-            {activeLeagues.length > 0 && (
+            {activeSeasons.length > 0 && (
               <div className="mb-3">
-                <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Selected League</p>
+                <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">League</p>
                 <div className="flex flex-wrap gap-2">
                   <Link
                     href="/standings"
@@ -349,43 +373,68 @@ export default async function StandingsPage({ searchParams }: Props) {
                   >
                     All Active
                   </Link>
-                  {activeLeagues.map((l) => (
+                  {allLeagues
+                    .filter((l) => l.seasons.some((s) => s.status === 'ACTIVE' || s.status === 'READY'))
+                    .map((l) => (
+                      <Link
+                        key={l.id}
+                        href={`/standings?leagueId=${l.id}`}
+                        className={clsx(
+                          'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
+                          leagueId === l.id
+                            ? 'bg-bb-gold text-bb-navy border-bb-gold font-bold'
+                            : 'border-bb-border text-bb-muted hover:border-bb-gold/40 hover:text-bb-gold',
+                        )}
+                      >
+                        {l.name}
+                        {l.seasons.some((s) => s.status === 'ACTIVE') && (
+                          <span className="ml-1.5 text-[10px] text-bb-crimson-bright">●</span>
+                        )}
+                      </Link>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {endedSeasons.length > 0 && !leagueId && (
+              <div>
+                <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Past Seasons</p>
+                <div className="flex flex-wrap gap-2">
+                  {endedSeasons.map((s) => (
                     <Link
-                      key={l.id}
-                      href={`/standings?leagueId=${l.id}`}
+                      key={s.id}
+                      href={`/standings?leagueId=${s.leagueId}&seasonId=${s.id}`}
                       className={clsx(
                         'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
-                        leagueId === l.id
-                          ? 'bg-bb-gold text-bb-navy border-bb-gold font-bold'
-                          : 'border-bb-border text-bb-muted hover:border-bb-gold/40 hover:text-bb-gold',
+                        seasonId === s.id
+                          ? 'bg-bb-muted/20 text-white border-bb-muted/60 font-bold'
+                          : 'border-bb-border/50 text-bb-muted/60 hover:border-bb-muted/50 hover:text-bb-muted',
                       )}
                     >
-                      {l.name}
-                      {l.status === 'ACTIVE' && (
-                        <span className="ml-1.5 text-[10px] text-bb-crimson-bright">●</span>
-                      )}
+                      {s.leagueName} · {s.name}
                     </Link>
                   ))}
                 </div>
               </div>
             )}
 
-            {endedLeagues.length > 0 && (
-              <div>
-                <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Past Seasons</p>
+            {/* Season picker within a selected league */}
+            {leagueId && selectedLeague && selectedLeague.seasons.length > 1 && (
+              <div className="mt-3">
+                <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Season</p>
                 <div className="flex flex-wrap gap-2">
-                  {endedLeagues.map((l) => (
+                  {selectedLeague.seasons.filter((s) => s.status !== 'PLANNING').map((s) => (
                     <Link
-                      key={l.id}
-                      href={`/standings?leagueId=${l.id}`}
+                      key={s.id}
+                      href={`/standings?leagueId=${leagueId}&seasonId=${s.id}`}
                       className={clsx(
                         'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
-                        leagueId === l.id
-                          ? 'bg-bb-muted/20 text-white border-bb-muted/60 font-bold'
-                          : 'border-bb-border/50 text-bb-muted/60 hover:border-bb-muted/50 hover:text-bb-muted',
+                        seasonId === s.id
+                          ? 'bg-bb-gold/20 text-bb-gold border-bb-gold/50 font-bold'
+                          : 'border-bb-border/50 text-bb-muted hover:border-bb-gold/30 hover:text-bb-gold/70',
                       )}
                     >
-                      {l.name} <span className="opacity-50">S{l.season}</span>
+                      {s.name}
                     </Link>
                   ))}
                 </div>
@@ -394,13 +443,13 @@ export default async function StandingsPage({ searchParams }: Props) {
           </div>
         )}
 
-        {/* ── Division filter — shown when a league is selected ─────── */}
-        {leagueId && selectedLeagueDivisions.length > 0 && (
+        {/* ── Division filter — shown when a league/season is selected ─────── */}
+        {(leagueId || seasonId) && selectedLeagueDivisions.length > 0 && (
           <div className="mb-8">
             <p className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/40 mb-2">Division</p>
             <div className="flex flex-wrap gap-2">
               <Link
-                href={`/standings?leagueId=${leagueId}`}
+                href={seasonId ? `/standings?leagueId=${leagueId}&seasonId=${seasonId}` : `/standings?leagueId=${leagueId}`}
                 className={clsx(
                   'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
                   !divisionId
@@ -413,7 +462,9 @@ export default async function StandingsPage({ searchParams }: Props) {
               {selectedLeagueDivisions.map((d) => (
                 <Link
                   key={d.id}
-                  href={`/standings?leagueId=${leagueId}&divisionId=${d.id}`}
+                  href={seasonId
+                    ? `/standings?leagueId=${leagueId}&seasonId=${seasonId}&divisionId=${d.id}`
+                    : `/standings?leagueId=${leagueId}&divisionId=${d.id}`}
                   className={clsx(
                     'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
                     divisionId === d.id
@@ -435,32 +486,37 @@ export default async function StandingsPage({ searchParams }: Props) {
           </div>
         )}
 
-        {/* ── No active leagues, nothing selected ───────────────────── */}
-        {!leagueId && activeLeagues.length === 0 && allLeagues.length > 0 && (
+        {/* ── No active seasons, nothing selected ───────────────────── */}
+        {!leagueId && !seasonId && activeSeasons.length === 0 && allLeagues.length > 0 && (
           <div className="bg-bb-dark border border-bb-border rounded-sm p-8 text-center mb-8">
-            <p className="text-bb-muted text-sm">No active leagues right now.</p>
+            <p className="text-bb-muted text-sm">No active seasons right now.</p>
             <p className="text-bb-muted/50 text-xs mt-1">Select a past season above to view its standings.</p>
           </div>
         )}
 
         {/* ── Standings blocks ───────────────────────────────────────── */}
         <div className="flex flex-col gap-10">
-          {leagueBlocks.map((league) => (
-            <section key={league.id}>
-              {(leagueBlocks.length > 1 || leagueId) && (
+          {seasonBlocks.map((block) => (
+            <section key={block.seasonId}>
+              {(seasonBlocks.length > 1 || leagueId || seasonId) && (
                 <div className="flex items-center gap-3 mb-4">
                   <div className="flex items-center gap-2">
-                    <h2 className="font-heading text-xl font-bold text-white tracking-wide">{league.name}</h2>
+                    <h2 className="font-heading text-xl font-bold text-white tracking-wide">
+                      {block.leagueName}
+                      {seasonBlocks.length > 1 && (
+                        <span className="text-bb-muted/60 font-normal text-base ml-2">· {block.seasonName}</span>
+                      )}
+                    </h2>
                     <span className={clsx(
                       'text-[10px] font-heading tracking-wider uppercase px-1.5 py-0.5 rounded-sm border',
-                      STATUS_CLS[league.status],
+                      SEASON_STATUS_CLS[block.status],
                     )}>
-                      {STATUS_LABEL[league.status]}
+                      {SEASON_STATUS_LABEL[block.status]}
                     </span>
                   </div>
                   <div className="flex-1 h-px bg-bb-border ml-2" />
                   <Link
-                    href={`/standings?leagueId=${league.id}`}
+                    href={`/standings?leagueId=${block.leagueId}&seasonId=${block.seasonId}`}
                     className="text-xs text-bb-muted hover:text-bb-gold transition-colors font-heading tracking-wide uppercase shrink-0"
                   >
                     Full view →
@@ -468,19 +524,19 @@ export default async function StandingsPage({ searchParams }: Props) {
                 </div>
               )}
 
-              {league.tournamentGroups.length === 0 && league.ungroupedTeams.length === 0 ? (
+              {block.tournamentGroups.length === 0 && block.ungroupedTeams.length === 0 ? (
                 <div className="bg-bb-dark border border-bb-border rounded-sm p-6 text-center">
-                  <p className="text-bb-muted/50 text-sm italic">No teams assigned to this league yet.</p>
+                  <p className="text-bb-muted/50 text-sm italic">No teams assigned to this season yet.</p>
                 </div>
               ) : (
-                <StandingsTable league={league} />
+                <StandingsTable block={block} />
               )}
             </section>
           ))}
         </div>
 
         {/* ── Past seasons cards (default view only) ────────────────── */}
-        {!leagueId && endedLeagues.length > 0 && (
+        {!leagueId && !seasonId && endedSeasons.length > 0 && (
           <div className="mt-14">
             <div className="flex items-center gap-4 mb-5">
               <h2 className="font-heading text-sm font-bold text-bb-muted/60 tracking-widest uppercase whitespace-nowrap">
@@ -489,15 +545,18 @@ export default async function StandingsPage({ searchParams }: Props) {
               <div className="flex-1 h-px bg-bb-border/50" />
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {endedLeagues.map((l) => (
+              {endedSeasons.map((s) => (
                 <Link
-                  key={l.id}
-                  href={`/standings?leagueId=${l.id}`}
+                  key={s.id}
+                  href={`/standings?leagueId=${s.leagueId}&seasonId=${s.id}`}
                   className="flex items-center justify-between px-4 py-3 bg-bb-dark border border-bb-border/50 rounded-sm hover:border-bb-muted/40 hover:bg-bb-darker/60 transition-colors group"
                 >
-                  <p className="font-heading font-bold text-bb-muted/80 group-hover:text-white text-sm transition-colors leading-tight">
-                    {l.name}
-                  </p>
+                  <div>
+                    <p className="font-heading font-bold text-bb-muted/80 group-hover:text-white text-sm transition-colors leading-tight">
+                      {s.leagueName}
+                    </p>
+                    <p className="text-xs text-bb-muted/50 mt-0.5">{s.name}</p>
+                  </div>
                   <span className="text-bb-muted/30 group-hover:text-bb-muted transition-colors text-sm">→</span>
                 </Link>
               ))}

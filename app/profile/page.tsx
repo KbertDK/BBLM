@@ -42,7 +42,7 @@ export default async function ProfilePage() {
       where:  { id: session.coachId },
       select: { name: true, alias: true, email: true, phone: true, address: true, zip: true, city: true, primaryLeagueId: true },
     }),
-    prisma.league.findMany({ where: { isHidden: false }, orderBy: { name: 'asc' }, select: { id: true, name: true, season: true } }),
+    prisma.league.findMany({ where: { isHidden: false }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
   ])
   if (!coach) redirect('/auth/login')
 
@@ -81,7 +81,7 @@ export default async function ProfilePage() {
               >
                 <option value="">— None —</option>
                 {leagues.map((l) => (
-                  <option key={l.id} value={l.id}>{l.name} (Season {l.season})</option>
+                  <option key={l.id} value={l.id}>{l.name}</option>
                 ))}
               </select>
             </div>

@@ -3,7 +3,8 @@ import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { getMatchesByLeague } from '@/lib/queries/matches'
 import {
-  createLeague, renameLeague, toggleLeagueVisibility, deleteLeague, setLeagueStatus,
+  createLeague, renameLeague, toggleLeagueVisibility, deleteLeague,
+  createSeason, renameSeason, setSeasonStatus, deleteSeason,
   createDivision, renameDivision, toggleDivisionVisibility, deleteDivision,
   assignTeamToDivision, removeTeamFromDivision,
 } from './actions'
@@ -13,6 +14,7 @@ import {
 } from './tournament-actions'
 import {
   createRuleSet, updateRuleSet, toggleRuleSetStatus, deleteRuleSet, setLeagueRuleSet,
+  addSpirallingExpenseTier, removeSpirallingExpenseTier, importDefaultSpirallingExpenseTiers,
 } from './ruleset-actions'
 import {
   createCoach, renameCoach, updateCoachEmail, resetCoachPassword,
@@ -24,15 +26,17 @@ export const dynamic = 'force-dynamic'
 
 // ── Display maps ─────────────────────────────────────────────────────────────
 
-const STATUS_LABELS: Record<string, string> = {
-  READY:  'Ready for first gameday',
-  ACTIVE: 'Season started',
-  ENDED:  'Season ended',
+const SEASON_STATUS_LABELS: Record<string, string> = {
+  PLANNING: 'Planning',
+  READY:    'Ready for first gameday',
+  ACTIVE:   'Season started',
+  ENDED:    'Season ended',
 }
-const STATUS_BADGE_CLS: Record<string, string> = {
-  READY:  'border-green-700/50 text-green-400 bg-green-900/10',
-  ACTIVE: 'border-bb-gold/40 text-bb-gold bg-bb-gold/5',
-  ENDED:  'border-bb-crimson/50 text-bb-crimson-bright bg-bb-crimson/5',
+const SEASON_STATUS_BADGE_CLS: Record<string, string> = {
+  PLANNING: 'border-bb-muted/30 text-bb-muted bg-bb-muted/5',
+  READY:    'border-green-700/50 text-green-400 bg-green-900/10',
+  ACTIVE:   'border-bb-gold/40 text-bb-gold bg-bb-gold/5',
+  ENDED:    'border-bb-crimson/50 text-bb-crimson-bright bg-bb-crimson/5',
 }
 
 const GAME_TYPE_LABELS: Record<string, string> = {
@@ -101,20 +105,23 @@ function btnCls(variant: 'primary' | 'ghost' | 'danger' | 'muted' = 'ghost', ext
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 interface Props {
-  searchParams: Promise<{ tab?: string; leagueId?: string; divisionId?: string }>
+  searchParams: Promise<{ tab?: string; leagueId?: string; divisionId?: string; seasonId?: string }>
 }
 
 export default async function LeagueManagementPage({ searchParams }: Props) {
   const session = await getSession()
   const isAdmin = session?.role === 'ADMIN'
 
-  const { tab: rawTab, leagueId: selectedLeagueId, divisionId: selectedDivisionId } = await searchParams
+  const { tab: rawTab, leagueId: selectedLeagueId, divisionId: selectedDivisionId, seasonId: selectedSeasonId } = await searchParams
   const tab = rawTab ?? 'leagues'
 
-  const [ruleSets, leagues, divisions, teams, tournaments] = await Promise.all([
+  const [ruleSets, leagues, seasons, divisions, teams, tournaments] = await Promise.all([
     prisma.ruleSet.findMany({
       orderBy: { name: 'asc' },
-      include: { _count: { select: { leagues: true } } },
+      include: {
+        _count: { select: { leagues: true } },
+        spirallingExpenseTiers: { orderBy: { teamValueThreshold: 'asc' } },
+      },
     }),
     prisma.league.findMany({
       orderBy: { createdAt: 'asc' },
@@ -123,10 +130,17 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
         ruleSet: { select: { id: true, name: true, gameType: true } },
       },
     }),
+    prisma.season.findMany({
+      orderBy: [{ leagueId: 'asc' }, { season: 'asc' }],
+      include: {
+        league: { select: { name: true } },
+        _count:  { select: { divisions: true } },
+      },
+    }),
     prisma.division.findMany({
       orderBy: { createdAt: 'asc' },
       include: {
-        league: { select: { name: true, status: true } },
+        season: { select: { name: true, status: true, league: { select: { name: true } } } },
         teams:  { select: { id: true, name: true, race: { select: { name: true } } }, orderBy: { name: 'asc' } },
       },
     }),
@@ -139,7 +153,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
       orderBy: { createdAt: 'asc' },
       include: {
         divisions: {
-          include:  { league: { select: { name: true } } },
+          include:  { season: { select: { name: true, league: { select: { name: true } } } } },
           orderBy:  { name: 'asc' },
         },
       },
@@ -165,8 +179,8 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
     ])
   }
 
-  const openLeagues    = leagues.filter((l) => l.status !== 'ENDED')        // for Divisions create form
-  const matchLeagues   = leagues.filter((l) => l.status === 'ACTIVE' || l.status === 'READY')  // for Matches tab
+  const openSeasons    = seasons.filter((s) => s.status !== 'ENDED')  // for Divisions create form
+  const matchLeagues   = leagues  // all leagues available for matches tab
   const activeRuleSets = ruleSets.filter((r) => r.status === 'ACTIVE')
 
   // Derived for matches tab
@@ -180,6 +194,11 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
   const leagueTournaments = tournaments
     .filter((t) => t.divisions.some((d) => leagueDivisionIds.has(d.id)))
     .map((t) => ({ id: t.id, name: t.name, divisionIds: t.divisions.map((d) => d.id) }))
+
+  // Seasons for the selected league (for the matches tab season picker)
+  const leagueSeasons = selectedLeagueId
+    ? seasons.filter((s) => s.leagueId === selectedLeagueId)
+    : []
 
   // Serialize matches for the client component (Date → ISO string)
   const serializedMatches = leagueMatches.map((m) => ({
@@ -198,7 +217,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
   }))
 
   const tabItems = [
-    { value: 'leagues', label: 'Leagues & Divisions' },
+    { value: 'leagues', label: 'Leagues & Seasons' },
     { value: 'matches', label: 'Matches & Schedule' },
     ...(isAdmin ? [{ value: 'users', label: 'Users' }] : []),
   ]
@@ -212,7 +231,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
           <h1 className="font-heading text-3xl font-black text-bb-gold tracking-widest uppercase mb-1">
             League Management
           </h1>
-          <p className="text-bb-muted text-sm mb-6">Manage rule sets, leagues, divisions, matches and team assignments.</p>
+          <p className="text-bb-muted text-sm mb-6">Manage rule sets, leagues, seasons, divisions, matches and team assignments.</p>
 
           <nav className="flex flex-wrap gap-1.5">
             {tabItems.map(({ value, label }) => (
@@ -231,7 +250,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
           </nav>
         </div>
 
-        {/* ── Tab 1: Leagues & Divisions ── */}
+        {/* ── Tab 1: Leagues & Seasons ── */}
         {tab === 'leagues' && (
           <>
             {/* Rule Sets */}
@@ -281,7 +300,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                         <div className="flex items-center gap-1.5 ml-auto shrink-0">
                           <Badge label={GAME_TYPE_LABELS[rs.gameType]} cls={GAME_TYPE_BADGE_CLS[rs.gameType]} />
                           <span className="text-bb-muted text-xs whitespace-nowrap">
-                            {rs.startIncome.toLocaleString()} gp · {rs.numberOfPlayers}p · W{rs.pointsWin}/D{rs.pointsDraw}/L{rs.pointsLoss}
+                            {rs.startIncome.toLocaleString()} gp · {rs.numberOfPlayers}p · W{rs.pointsWin}/D{rs.pointsDraw}/L{rs.pointsLoss} · {rs.spirallingExpenseTiers.length} SE tier{rs.spirallingExpenseTiers.length !== 1 ? 's' : ''}
                           </span>
                           {rs.status === 'ACTIVE' ? (
                             <Badge label="Active"   cls="border-green-700/50 text-green-400 bg-green-900/10" />
@@ -341,6 +360,39 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                             </button>
                           </form>
                         </div>
+
+                        <div className="border-t border-bb-border/40 pt-3 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <p className="text-bb-muted text-xs uppercase tracking-widest">Spiralling Expenses</p>
+                            <form action={importDefaultSpirallingExpenseTiers}>
+                              <input type="hidden" name="ruleSetId" value={rs.id} />
+                              <button type="submit" className={btnCls('ghost')} title="Fill in any missing CRP1 standard tiers (1,750k+, +10,000gp every +150,000 TV)">
+                                Import CRP1 Defaults
+                              </button>
+                            </form>
+                          </div>
+                          {rs.spirallingExpenseTiers.length === 0 && (
+                            <p className="text-bb-muted/40 text-xs italic">No tiers configured — Spiralling Expenses disabled for this rule set.</p>
+                          )}
+                          {rs.spirallingExpenseTiers.map((tier) => (
+                            <div key={tier.id} className="flex items-center justify-between text-sm">
+                              <span className="text-white">
+                                {tier.teamValueThreshold.toLocaleString()}k TV &rarr; {tier.expenseAmount.toLocaleString()} gp
+                              </span>
+                              <form action={removeSpirallingExpenseTier}>
+                                <input type="hidden" name="id" value={tier.id} />
+                                <button type="submit" className={btnCls('danger')}>Remove</button>
+                              </form>
+                            </div>
+                          ))}
+                          <form action={addSpirallingExpenseTier} className="flex items-center gap-2 pt-1">
+                            <input type="hidden" name="ruleSetId" value={rs.id} />
+                            <input name="teamValueThreshold" type="number" min={0} step={10} required placeholder="TV (k)" className={inputCls('w-24')} />
+                            <span className="text-bb-muted text-xs whitespace-nowrap">k TV &rarr;</span>
+                            <input name="expenseAmount" type="number" min={0} step={1000} required placeholder="Expense (gp)" className={inputCls('w-32')} />
+                            <button type="submit" className={btnCls('ghost')}>Add Tier</button>
+                          </form>
+                        </div>
                       </div>
                     </details>
                   )
@@ -359,7 +411,6 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                 </summary>
                 <form action={createLeague} className="px-4 pb-4 pt-3 border-t border-bb-border/40 flex gap-2">
                   <input name="name" required placeholder="League name" className={inputCls('flex-1')} />
-                  <input name="season" type="number" required min={1} defaultValue={1} placeholder="Season" className={inputCls('w-24')} />
                   <button type="submit" className={btnCls('primary')}>Create</button>
                 </form>
               </details>
@@ -375,8 +426,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                       <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
                         <Chevron cls="text-bb-muted/60" />
                         <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{league.name}</span>
-<div className="flex items-center gap-1.5 ml-auto shrink-0">
-                          <Badge label={STATUS_LABELS[league.status]} cls={STATUS_BADGE_CLS[league.status]} />
+                        <div className="flex items-center gap-1.5 ml-auto shrink-0">
                           {league.ruleSet && (
                             <Badge
                               label={`${league.ruleSet.name} · ${GAME_TYPE_LABELS[league.ruleSet.gameType]}`}
@@ -395,15 +445,6 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                           <input type="hidden" name="id" value={league.id} />
                           <input name="name" defaultValue={league.name} required className={inputCls('flex-1')} />
                           <button type="submit" className={btnCls('ghost')}>Rename</button>
-                        </form>
-                        <form action={setLeagueStatus} className="flex gap-2 items-center">
-                          <input type="hidden" name="id" value={league.id} />
-                          <select name="status" defaultValue={league.status} className={inputCls('flex-1 text-xs')}>
-                            <option value="READY">Ready for first gameday</option>
-                            <option value="ACTIVE">Season started</option>
-                            <option value="ENDED">Season ended</option>
-                          </select>
-                          <button type="submit" className={btnCls('ghost')}>Set Status</button>
                         </form>
                         <form action={setLeagueRuleSet} className="flex gap-2 items-center">
                           <input type="hidden" name="id" value={league.id} />
@@ -444,6 +485,84 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
               </div>
             </section>
 
+            {/* Seasons */}
+            <section>
+              <SectionHeading title="Seasons" />
+
+              <details className="group mb-6 bg-bb-dark border border-bb-border rounded-sm">
+                <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                  <Chevron cls="text-bb-muted" />
+                  <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Create new season</span>
+                </summary>
+                <form action={createSeason} className="px-4 pb-4 pt-3 border-t border-bb-border/40 flex gap-2">
+                  <select name="leagueId" required className={inputCls('w-44')}>
+                    <option value="">— Select league —</option>
+                    {leagues.map((l) => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                  <input name="name" required placeholder="Season name" className={inputCls('flex-1')} />
+                  <input name="season" type="number" required min={1} defaultValue={1} placeholder="#" className={inputCls('w-16 text-center')} />
+                  <button type="submit" className={btnCls('primary')}>Create</button>
+                </form>
+              </details>
+
+              <div className="border border-bb-border rounded-sm divide-y divide-bb-border/50 overflow-hidden">
+                {seasons.length === 0 && (
+                  <p className="text-bb-muted/50 text-sm italic px-4 py-3">No seasons yet.</p>
+                )}
+                {seasons.map((season) => {
+                  const divCount = season._count.divisions
+                  return (
+                    <details key={season.id} className="group bg-bb-dark">
+                      <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+                        <Chevron cls="text-bb-muted/60" />
+                        <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{season.name}</span>
+                        <Badge label={season.league.name} cls="border-bb-gold/30 text-bb-gold/70 bg-bb-gold/5 hidden sm:inline" />
+                        <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                          <Badge label={SEASON_STATUS_LABELS[season.status]} cls={SEASON_STATUS_BADGE_CLS[season.status]} />
+                          <span className="text-bb-muted/40 text-xs whitespace-nowrap">
+                            {divCount} division{divCount !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      </summary>
+
+                      <div className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-2 bg-bb-darker/30">
+                        <form action={renameSeason} className="flex gap-1.5">
+                          <input type="hidden" name="id" value={season.id} />
+                          <input name="name" defaultValue={season.name} required className={inputCls('flex-1')} />
+                          <button type="submit" className={btnCls('ghost')}>Rename</button>
+                        </form>
+                        <form action={setSeasonStatus} className="flex gap-2 items-center">
+                          <input type="hidden" name="id" value={season.id} />
+                          <select name="status" defaultValue={season.status} className={inputCls('flex-1 text-xs')}>
+                            <option value="PLANNING">Planning</option>
+                            <option value="READY">Ready for first gameday</option>
+                            <option value="ACTIVE">Season started</option>
+                            <option value="ENDED">Season ended</option>
+                          </select>
+                          <button type="submit" className={btnCls('ghost')}>Set Status</button>
+                        </form>
+                        <div className="flex gap-2 pt-1 border-t border-bb-border/30">
+                          <form action={deleteSeason}>
+                            <input type="hidden" name="id" value={season.id} />
+                            <button
+                              type="submit"
+                              disabled={divCount > 0}
+                              title={divCount > 0 ? 'Remove all divisions first' : 'Delete season'}
+                              className={btnCls(divCount > 0 ? 'muted' : 'danger')}
+                            >
+                              Delete
+                            </button>
+                          </form>
+                        </div>
+                      </div>
+                    </details>
+                  )
+                })}
+              </div>
+            </section>
+
             {/* Divisions */}
             <section>
               <SectionHeading title="Divisions" />
@@ -455,10 +574,10 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                 </summary>
                 <form action={createDivision} className="px-4 pb-4 pt-3 border-t border-bb-border/40 flex gap-2">
                   <input name="name" required placeholder="Division name" className={inputCls('flex-1')} />
-                  <select name="leagueId" required className={inputCls('w-48')}>
-                    <option value="">— Select league —</option>
-                    {openLeagues.map((l) => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
+                  <select name="seasonId" required className={inputCls('w-52')}>
+                    <option value="">— Select season —</option>
+                    {openSeasons.map((s) => (
+                      <option key={s.id} value={s.id}>{s.league.name} · {s.name}</option>
                     ))}
                   </select>
                   <button type="submit" className={btnCls('primary')}>Create</button>
@@ -471,13 +590,13 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                 )}
                 {divisions.map((div) => {
                   const hasTeams = div.teams.length > 0
-                  const isLocked = div.league.status === 'ENDED'
+                  const isLocked = div.season.status === 'ENDED'
                   return (
                     <details key={div.id} className="group bg-bb-dark">
                       <summary className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
                         <Chevron cls="text-bb-muted/60" />
                         <span className="font-heading font-bold text-white text-sm min-w-0 truncate">{div.name}</span>
-                        <Badge label={div.league.name} cls="border-bb-gold/30 text-bb-gold bg-bb-gold/5 hidden sm:inline" />
+                        <Badge label={`${div.season.league.name} · ${div.season.name}`} cls="border-bb-gold/30 text-bb-gold bg-bb-gold/5 hidden sm:inline" />
                         <div className="flex items-center gap-1.5 ml-auto shrink-0">
                           <span className="text-bb-muted/40 text-xs whitespace-nowrap">
                             {div.teams.length} team{div.teams.length !== 1 ? 's' : ''}
@@ -572,10 +691,10 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                   <form action={createTournament} className="space-y-2">
                     <div className="flex gap-2">
                       <input name="name" required placeholder="Tournament name" className={inputCls('flex-1')} />
-                      <select name="divisionId" required className={inputCls('w-52')}>
+                      <select name="divisionId" required className={inputCls('w-60')}>
                         <option value="">— Select division —</option>
                         {divisions.map((d) => (
-                          <option key={d.id} value={d.id}>{d.name} ({d.league.name})</option>
+                          <option key={d.id} value={d.id}>{d.name} ({d.season.league.name} · {d.season.name})</option>
                         ))}
                       </select>
                       <button type="submit" className={btnCls('primary')}>Create</button>
@@ -638,7 +757,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                             <div key={d.id} className="flex items-center justify-between">
                               <span className="text-sm text-white">
                                 {d.name}
-                                <span className="text-bb-muted text-xs ml-2">({d.league.name})</span>
+                                <span className="text-bb-muted text-xs ml-2">({d.season.league.name} · {d.season.name})</span>
                               </span>
                               <form action={removeDivisionFromTournament}>
                                 <input type="hidden" name="tournamentId" value={t.id} />
@@ -663,7 +782,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                               <select name="divisionId" required className={inputCls('flex-1 text-xs')}>
                                 <option value="">— Add a division —</option>
                                 {available.map((d) => (
-                                  <option key={d.id} value={d.id}>{d.name} ({d.league.name})</option>
+                                  <option key={d.id} value={d.id}>{d.name} ({d.season.league.name} · {d.season.name})</option>
                                 ))}
                               </select>
                               <button type="submit" className={btnCls('ghost')}>Add</button>
@@ -686,6 +805,8 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
             <MatchesTab
               matchLeagues={matchLeagues}
               selectedLeagueId={selectedLeagueId}
+              leagueSeasons={leagueSeasons.map((s) => ({ id: s.id, name: s.name, season: s.season, status: s.status }))}
+              selectedSeasonId={selectedSeasonId}
               leagueDivisions={leagueDivisions}
               leagueTeams={leagueTeams.map((t) => ({ id: t.id, name: t.name, divisionId: t.divisionId }))}
               matches={serializedMatches}
@@ -788,7 +909,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                         <select name="primaryLeagueId" defaultValue={coach.primaryLeagueId ?? ''} className={inputCls('flex-1')}>
                           <option value="">— No primary league —</option>
                           {leagues.map((l) => (
-                            <option key={l.id} value={l.id}>{l.name} (Season {l.season})</option>
+                            <option key={l.id} value={l.id}>{l.name}</option>
                           ))}
                         </select>
                         <button type="submit" className={btnCls('ghost')}>Set League</button>

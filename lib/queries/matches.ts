@@ -76,7 +76,8 @@ export async function getMatchReport(matchId: string) {
     include: {
       homeTeam: { select: { id: true, name: true, race: { select: { name: true } } } },
       awayTeam: { select: { id: true, name: true, race: { select: { name: true } } } },
-      league:   { select: { name: true, season: true } },
+      league:   { select: { name: true } },
+      season:   { select: { name: true, season: true } },
       events:   { orderBy: { createdAt: 'asc' } },
       matchPlayerStats: {
         include: { teamPlayer: { select: { id: true, name: true, number: true, teamId: true, playerType: { select: { name: true } } } } },

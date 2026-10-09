@@ -1,33 +1,13 @@
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
+import { skillRollsAvailable } from '@/lib/ssp'
+import { computeTV } from '@/lib/teamValue'
 import GameOnClient from './GameOnClient'
 
 interface PageProps {
   params: Promise<{ id: string }>
-}
-
-function computeTV(team: {
-  players:          { status: string; value: number; playerType: { cost: number } }[]
-  rerolls:          number
-  race:             { rerollPrice: number }
-  assistantCoaches: number
-  cheerleaders:     number
-  fanFactor:        number
-  apothecary:       boolean
-}, extraValue = 0) {
-  const playerValue = team.players
-    .filter((p) => p.status === 'ACTIVE')
-    .reduce((s, p) => s + (p.value > 0 ? p.value : p.playerType.cost), 0)
-  return Math.round(
-    (playerValue + extraValue +
-      team.rerolls          * team.race.rerollPrice +
-      team.assistantCoaches * 10000 +
-      team.cheerleaders     * 10000 +
-      team.fanFactor        * 10000 +
-      (team.apothecary ? 50000 : 0)) /
-    1000,
-  )
 }
 
 export default async function GameOnPage({ params }: PageProps) {
@@ -38,12 +18,17 @@ export default async function GameOnPage({ params }: PageProps) {
     prisma.match.findUnique({
       where: { id },
       include: {
+        weather: { select: { name: true, description: true } },
+        league: { select: { ruleSet: { select: { spirallingExpenseTiers: {
+          select: { teamValueThreshold: true, expenseAmount: true },
+        } } } } },
         homeTeam: {
           select: {
             id:               true,
             name:             true,
             coachId:          true,
             raceId:           true,
+            logoUrl:          true,
             treasury:         true,
             fanFactor:        true,
             rerolls:          true,
@@ -64,6 +49,7 @@ export default async function GameOnPage({ params }: PageProps) {
             name:             true,
             coachId:          true,
             raceId:           true,
+            logoUrl:          true,
             treasury:         true,
             fanFactor:        true,
             rerolls:          true,
@@ -110,6 +96,61 @@ export default async function GameOnPage({ params }: PageProps) {
     )
   }
 
+  // Block launching a new match while either team has an un-resolved skill-up — either a
+  // SkillRoll made but not yet consumed by picking a skill/stat, OR a player who has crossed
+  // an SPP threshold but hasn't even rolled yet (no SkillRoll row exists for them at all).
+  if (match.status === 'SCHEDULED') {
+    const rosterPlayers = await prisma.teamPlayer.findMany({
+      where: {
+        teamId: { in: [match.homeTeamId, match.awayTeamId] },
+        status: { in: ['ACTIVE', 'MNG'] },
+      },
+      select: {
+        id: true, number: true, name: true, teamId: true, ssp: true,
+        playerType: { select: { name: true } },
+        _count:     { select: { skillRolls: true } },
+        skillRolls: { where: { consumed: false }, select: { id: true } },
+      },
+    })
+
+    const pendingPlayers = rosterPlayers.filter((p) =>
+      p.skillRolls.length > 0 || skillRollsAvailable(p.ssp, p._count.skillRolls) > 0
+    )
+
+    if (pendingPlayers.length > 0) {
+      const teamNameById: Record<string, string> = {
+        [match.homeTeamId]: match.homeTeam.name,
+        [match.awayTeamId]: match.awayTeam.name,
+      }
+      return (
+        <div className="min-h-screen bg-bb-darker flex items-center justify-center text-white p-4">
+          <div className="text-center p-8 border border-bb-gold/30 rounded-sm bg-bb-dark max-w-md w-full">
+            <div className="text-4xl mb-4">🎲</div>
+            <h1 className="font-heading text-xl font-black text-bb-gold mb-3">Unresolved Skill-Ups</h1>
+            <p className="text-bb-muted text-sm mb-5">
+              The following players have a skill-up roll that hasn&apos;t been resolved yet.
+              Pick their skill or characteristic increase on the Team Roster page before starting this match.
+            </p>
+            <div className="space-y-2 text-left">
+              {pendingPlayers.map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-3 bg-bb-darker border border-bb-border rounded-sm px-3 py-2">
+                  <div>
+                    <p className="text-sm text-white">#{p.number} {p.name ?? p.playerType.name}</p>
+                    <p className="text-xs text-bb-muted">{teamNameById[p.teamId]}</p>
+                  </div>
+                  <Link href={`/teams/${p.teamId}`}
+                    className="shrink-0 px-3 py-1.5 rounded-sm border border-bb-gold/50 text-bb-gold text-xs font-heading uppercase tracking-wider hover:bg-bb-gold hover:text-bb-dark transition-colors">
+                    Resolve →
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )
+    }
+  }
+
   const homeRaceName = match.homeTeam.race.name
   const awayRaceName = match.awayTeam.race.name
 
@@ -122,8 +163,8 @@ export default async function GameOnPage({ params }: PageProps) {
     orderBy: { price: 'asc' as const },
   }
 
-  // Parallel-fetch pricelist player types, mercs, journeymen, star players, and generic inducements
-  const [homePlayerTypes, awayPlayerTypes, matchMercs, matchJourneymen, homeStarPlayerRows, awayStarPlayerRows, matchStarRows, mdInducements, matchInducements] = await Promise.all([
+  // Parallel-fetch pricelist player types, mercs, journeymen, star players, generic inducements, and Special Play Card decks
+  const [homePlayerTypes, awayPlayerTypes, matchMercs, matchJourneymen, homeStarPlayerRows, awayStarPlayerRows, matchStarRows, mdInducements, matchInducements, specialPlayDecks, matchSpecialPlayCards, kickoffTableRows] = await Promise.all([
     prisma.playerType.findMany({
       where:   { raceId: match.homeTeam.raceId },
       orderBy: { cost: 'asc' },
@@ -170,6 +211,20 @@ export default async function GameOnPage({ params }: PageProps) {
       where:   { matchId: id },
       include: { inducement: true },
       orderBy: { createdAt: 'asc' },
+    }),
+    prisma.mdSpecialPlayDeck.findMany({
+      orderBy: { price: 'asc' },
+      include: { cards: { orderBy: { cardLabel: 'asc' } } },
+    }),
+    prisma.matchSpecialPlayCard.findMany({
+      where:   { matchId: id },
+      include: { deck: true, card: true },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.mdMatchEvent.findMany({
+      where:   { eventType: 'Kick off' },
+      select:  { dieRoll: true, name: true, description: true },
+      orderBy: { dieRoll: 'asc' },
     }),
   ])
 
@@ -373,6 +428,26 @@ export default async function GameOnPage({ params }: PageProps) {
     .filter((m) => m.side === 'away')
     .map((m) => ({ id: m.id, inducementId: m.inducementId, name: m.inducement.name, cost: m.cost, rule: m.inducement.rule, used: m.used, chefHalf1Used: m.chefHalf1Used, chefHalf2Used: m.chefHalf2Used }))
 
+  const specialPlayDeckList = specialPlayDecks.map((d) => ({
+    id:    d.id,
+    name:  d.name,
+    price: d.price,
+    cards: d.cards.map((c) => ({ id: c.id, cardLabel: c.cardLabel, name: c.name, description: c.description, timing: c.timing, effect: c.effect })),
+  }))
+  const mapSpecialPlayCards = (side: 'home' | 'away') => matchSpecialPlayCards
+    .filter((m) => m.side === side)
+    .map((m) => ({
+      id:        m.id,
+      deckId:    m.deckId,
+      deckName:  m.deck.name,
+      cost:      m.cost,
+      cardId:    m.cardId,
+      cardName:  m.card?.name ?? null,
+      turn:      m.turn,
+    }))
+  const homeSpecialPlayCards = mapSpecialPlayCards('home')
+  const awaySpecialPlayCards = mapSpecialPlayCards('away')
+
   const wizardDone = match.homeTeamValue !== null
 
   const matchData = {
@@ -382,10 +457,18 @@ export default async function GameOnPage({ params }: PageProps) {
     wizardDone,
     homeTeamValue:     computeTV(match.homeTeam, homeInducementValue),
     awayTeamValue:     computeTV(match.awayTeam, awayInducementValue),
+    // Frozen roster-only value (excludes this match's journeymen/mercs/stars) — the correct
+    // basis for the Inducement gold gap, which must not shrink as that gold gets spent.
+    homeBaseTeamValue: computeTV(match.homeTeam),
+    awayBaseTeamValue: computeTV(match.awayTeam),
     homeTeamTreasury:  match.homeTeam.treasury,
     awayTeamTreasury:  match.awayTeam.treasury,
     homeTeamFanFactor: match.homeTeam.fanFactor,
     awayTeamFanFactor: match.awayTeam.fanFactor,
+    homeCheerleaders:     match.homeTeam.cheerleaders,
+    awayCheerleaders:     match.awayTeam.cheerleaders,
+    homeAssistantCoaches: match.homeTeam.assistantCoaches,
+    awayAssistantCoaches: match.awayTeam.assistantCoaches,
     homePlayerTypes:   mapPriceList(homePlayerTypes),
     awayPlayerTypes:   mapPriceList(awayPlayerTypes),
     homeJourneymanTypes: mapJourneymanTypes(homePlayerTypes),
@@ -400,11 +483,24 @@ export default async function GameOnPage({ params }: PageProps) {
     awayHasApothecary:    match.awayTeam.race.hasApothecary,
     homeApothecaryUsed:   match.homeApothecaryUsed,
     awayApothecaryUsed:   match.awayApothecaryUsed,
+    weather:        match.weather ? { name: match.weather.name, description: match.weather.description ?? '' } : null,
+    homePettyCash:  match.homePettyCash,
+    awayPettyCash:  match.awayPettyCash,
+    homeFans:       match.homeFans,
+    awayFans:       match.awayFans,
+    homeFame:       match.homeFame,
+    awayFame:       match.awayFame,
+    spirallingExpenseTiers: match.league?.ruleSet?.spirallingExpenseTiers ?? [],
+    specialPlayDecks:    specialPlayDeckList,
+    homeSpecialPlayCards,
+    awaySpecialPlayCards,
+    kickoffTable: kickoffTableRows.map((r) => ({ dieRoll: r.dieRoll!, name: r.name, description: r.description ?? '' })),
     homeTeam: {
       id:       match.homeTeam.id,
       name:     match.homeTeam.name,
       coachId:  match.homeTeam.coachId,
       raceName: match.homeTeam.race.name,
+      logoUrl:  match.homeTeam.logoUrl ?? null,
       players: [
         ...match.homeTeam.players.map((p) => ({
           id:             p.id,
@@ -430,6 +526,7 @@ export default async function GameOnPage({ params }: PageProps) {
       name:     match.awayTeam.name,
       coachId:  match.awayTeam.coachId,
       raceName: match.awayTeam.race.name,
+      logoUrl:  match.awayTeam.logoUrl ?? null,
       players: [
         ...match.awayTeam.players.map((p) => ({
           id:             p.id,

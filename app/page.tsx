@@ -38,7 +38,7 @@ export default async function HomePage({
     prisma.league.findMany({
       where:   { isHidden: false },
       orderBy: { createdAt: 'asc' },
-      select:  { id: true, name: true, season: true },
+      select:  { id: true, name: true },
     }),
   ])
 

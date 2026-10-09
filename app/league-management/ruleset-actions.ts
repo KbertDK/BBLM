@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { GameType, RuleSetStatus } from '@prisma/client'
+import { DEFAULT_SPIRALLING_EXPENSE_TIERS } from '@/lib/spirallingExpenses'
 
 const REVALIDATE = '/league-management'
 const VALID_GAME_TYPES = ['BLOOD_BOWL', 'DUNGEON_BOWL', 'BB7']
@@ -18,7 +19,12 @@ export async function createRuleSet(formData: FormData) {
   if (!name || isNaN(startIncome) || !VALID_GAME_TYPES.includes(gameType)) return
   if (isNaN(pointsWin) || isNaN(pointsDraw) || isNaN(pointsLoss)) return
   if (pointsWin < 0 || pointsDraw < 0 || pointsLoss < 0) return
-  await prisma.ruleSet.create({ data: { name, startIncome, numberOfPlayers, gameType: gameType as GameType, pointsWin, pointsDraw, pointsLoss } })
+  await prisma.ruleSet.create({
+    data: {
+      name, startIncome, numberOfPlayers, gameType: gameType as GameType, pointsWin, pointsDraw, pointsLoss,
+      spirallingExpenseTiers: { create: DEFAULT_SPIRALLING_EXPENSE_TIERS },
+    },
+  })
   revalidatePath(REVALIDATE)
 }
 
@@ -59,5 +65,35 @@ export async function setLeagueRuleSet(formData: FormData) {
   const id        =  formData.get('id')        as string
   const ruleSetId = (formData.get('ruleSetId') as string) || null
   await prisma.league.update({ where: { id }, data: { ruleSetId } })
+  revalidatePath(REVALIDATE)
+}
+
+export async function addSpirallingExpenseTier(formData: FormData) {
+  const ruleSetId          = formData.get('ruleSetId') as string
+  const teamValueThreshold = parseInt(formData.get('teamValueThreshold') as string, 10)
+  const expenseAmount      = parseInt(formData.get('expenseAmount') as string, 10)
+  if (!ruleSetId || isNaN(teamValueThreshold) || isNaN(expenseAmount) || teamValueThreshold < 0 || expenseAmount < 0) return
+  await prisma.spirallingExpenseTier.create({ data: { ruleSetId, teamValueThreshold, expenseAmount } })
+  revalidatePath(REVALIDATE)
+}
+
+export async function removeSpirallingExpenseTier(formData: FormData) {
+  const id = formData.get('id') as string
+  if (!id) return
+  await prisma.spirallingExpenseTier.delete({ where: { id } })
+  revalidatePath(REVALIDATE)
+}
+
+export async function importDefaultSpirallingExpenseTiers(formData: FormData) {
+  const ruleSetId = formData.get('ruleSetId') as string
+  if (!ruleSetId) return
+  const existing = await prisma.spirallingExpenseTier.findMany({
+    where:  { ruleSetId },
+    select: { teamValueThreshold: true },
+  })
+  const existingThresholds = new Set(existing.map((t) => t.teamValueThreshold))
+  const missing = DEFAULT_SPIRALLING_EXPENSE_TIERS.filter((t) => !existingThresholds.has(t.teamValueThreshold))
+  if (missing.length === 0) return
+  await prisma.spirallingExpenseTier.createMany({ data: missing.map((t) => ({ ruleSetId, ...t })) })
   revalidatePath(REVALIDATE)
 }

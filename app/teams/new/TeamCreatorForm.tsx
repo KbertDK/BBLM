@@ -18,7 +18,6 @@ type RuleSetInfo = {
 type LeagueOption = {
   id: string
   name: string
-  season: number
   ruleSet: RuleSetInfo
 }
 
@@ -226,7 +225,7 @@ export function TeamCreatorForm({ races, leagues, playerTypes, preselectedRaceId
                 >
                   <option value="">— Select a league —</option>
                   {leagues.map((l) => (
-                    <option key={l.id} value={l.id}>{l.name} — Season {l.season}</option>
+                    <option key={l.id} value={l.id}>{l.name}</option>
                   ))}
                 </select>
                 {ruleSet && (

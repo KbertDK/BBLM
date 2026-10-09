@@ -7,7 +7,7 @@ import clsx from 'clsx'
 
 export const revalidate = 60
 
-type Props = { searchParams: Promise<{ leagueId?: string; divisionId?: string }> }
+type Props = { searchParams: Promise<{ leagueId?: string; seasonId?: string; divisionId?: string }> }
 
 const STATUS_CLS: Record<string, string> = {
   SCHEDULED: 'text-bb-muted/70 border-bb-muted/30 bg-bb-darker',
@@ -21,7 +21,7 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default async function SchedulePage({ searchParams }: Props) {
-  const { leagueId, divisionId } = await searchParams
+  const { leagueId, seasonId, divisionId } = await searchParams
 
   // Default to the user's primary league when no league is selected
   if (!leagueId) {
@@ -36,14 +36,28 @@ export default async function SchedulePage({ searchParams }: Props) {
   }
 
   const leagues = await prisma.league.findMany({
-    where: { isHidden: false, status: { in: ['READY', 'ACTIVE'] } },
-    orderBy: [{ status: 'asc' }, { name: 'asc' }],
-    select: { id: true, name: true, season: true, status: true },
+    where: {
+      isHidden: false,
+      seasons: { some: { status: { in: ['READY', 'ACTIVE'] } } },
+    },
+    orderBy: { name: 'asc' },
+    select: {
+      id: true, name: true,
+      seasons: {
+        where:   { status: { in: ['READY', 'ACTIVE'] } },
+        orderBy: { season: 'desc' },
+        take: 1,
+        select:  { id: true, name: true, season: true, status: true },
+      },
+    },
   })
 
   const divisions = leagueId
     ? await prisma.division.findMany({
-        where: { leagueId, isHidden: false },
+        where: {
+          isHidden: false,
+          ...(seasonId ? { seasonId } : { season: { leagueId } }),
+        },
         orderBy: { name: 'asc' },
         select: { id: true, name: true },
       })
@@ -56,17 +70,21 @@ export default async function SchedulePage({ searchParams }: Props) {
     where: leagueId
       ? {
           leagueId,
+          ...(seasonId  ? { seasonId } : {}),
           ...(divisionId
             ? { OR: [{ homeTeam: { divisionId } }, { awayTeam: { divisionId } }] }
             : {}),
         }
       : {
           status: { in: ['SCHEDULED', 'LIVE'] },
-          league: { isHidden: false, status: { in: ['READY', 'ACTIVE'] } },
+          league: {
+            isHidden: false,
+            seasons: { some: { status: { in: ['READY', 'ACTIVE'] } } },
+          },
         },
     include: {
       tournament: { select: { id: true, name: true } },
-      league:     { select: { id: true, name: true, season: true } },
+      league:     { select: { id: true, name: true } },
       homeTeam:   { select: { id: true, name: true, division: { select: { id: true, name: true } } } },
       awayTeam:   { select: { id: true, name: true, division: { select: { id: true, name: true } } } },
     },
@@ -165,23 +183,26 @@ export default async function SchedulePage({ searchParams }: Props) {
             >
               All Leagues
             </Link>
-            {leagues.map((l) => (
-              <Link
-                key={l.id}
-                href={`/schedule?leagueId=${l.id}`}
-                className={clsx(
-                  'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
-                  leagueId === l.id
-                    ? 'bg-bb-gold text-bb-navy border-bb-gold font-bold'
-                    : 'border-bb-border text-bb-muted hover:border-bb-gold/40 hover:text-bb-gold',
-                )}
-              >
-                {l.name}
-                {l.status === 'ACTIVE' && (
-                  <span className="ml-1.5 text-bb-crimson-bright text-[10px] normal-case font-bold">●</span>
-                )}
-              </Link>
-            ))}
+            {leagues.map((l) => {
+              const activeSeason = l.seasons[0]
+              return (
+                <Link
+                  key={l.id}
+                  href={`/schedule?leagueId=${l.id}`}
+                  className={clsx(
+                    'px-3 py-1.5 text-xs font-heading tracking-wider uppercase rounded-sm border transition-colors',
+                    leagueId === l.id
+                      ? 'bg-bb-gold text-bb-navy border-bb-gold font-bold'
+                      : 'border-bb-border text-bb-muted hover:border-bb-gold/40 hover:text-bb-gold',
+                  )}
+                >
+                  {l.name}
+                  {activeSeason?.status === 'ACTIVE' && (
+                    <span className="ml-1.5 text-bb-crimson-bright text-[10px] normal-case font-bold">●</span>
+                  )}
+                </Link>
+              )
+            })}
           </div>
         </div>
 
@@ -454,33 +475,38 @@ export default async function SchedulePage({ searchParams }: Props) {
               Jump to league schedule
             </h2>
             <div className="grid gap-3 sm:grid-cols-2">
-              {leagues.map((l) => (
-                <Link
-                  key={l.id}
-                  href={`/schedule?leagueId=${l.id}`}
-                  className="flex items-center justify-between px-5 py-4 bg-bb-dark border border-bb-gold/20 rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors group"
-                >
-                  <div>
-                    <p className="font-heading font-bold text-white group-hover:text-bb-gold transition-colors text-sm leading-tight">
-                      {l.name}
-                    </p>
-                    <p className="text-xs text-bb-muted mt-0.5">Season {l.season}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {l.status === 'ACTIVE' && (
-                      <span className="text-[10px] font-heading tracking-wider uppercase px-2 py-0.5 rounded-sm border text-bb-crimson-bright border-bb-crimson-bright/40 bg-bb-crimson/10">
-                        Active
-                      </span>
-                    )}
-                    {l.status === 'READY' && (
-                      <span className="text-[10px] font-heading tracking-wider uppercase px-2 py-0.5 rounded-sm border text-bb-muted border-bb-muted/30">
-                        Ready
-                      </span>
-                    )}
-                    <span className="text-bb-gold/40 group-hover:text-bb-gold transition-colors">→</span>
-                  </div>
-                </Link>
-              ))}
+              {leagues.map((l) => {
+                const activeSeason = l.seasons[0]
+                return (
+                  <Link
+                    key={l.id}
+                    href={`/schedule?leagueId=${l.id}`}
+                    className="flex items-center justify-between px-5 py-4 bg-bb-dark border border-bb-gold/20 rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors group"
+                  >
+                    <div>
+                      <p className="font-heading font-bold text-white group-hover:text-bb-gold transition-colors text-sm leading-tight">
+                        {l.name}
+                      </p>
+                      {activeSeason && (
+                        <p className="text-xs text-bb-muted mt-0.5">{activeSeason.name}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {activeSeason?.status === 'ACTIVE' && (
+                        <span className="text-[10px] font-heading tracking-wider uppercase px-2 py-0.5 rounded-sm border text-bb-crimson-bright border-bb-crimson-bright/40 bg-bb-crimson/10">
+                          Active
+                        </span>
+                      )}
+                      {activeSeason?.status === 'READY' && (
+                        <span className="text-[10px] font-heading tracking-wider uppercase px-2 py-0.5 rounded-sm border text-bb-muted border-bb-muted/30">
+                          Ready
+                        </span>
+                      )}
+                      <span className="text-bb-gold/40 group-hover:text-bb-gold transition-colors">→</span>
+                    </div>
+                  </Link>
+                )
+              })}
             </div>
           </div>
         )}

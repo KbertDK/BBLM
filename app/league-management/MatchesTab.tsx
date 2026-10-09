@@ -14,7 +14,8 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface League    { id: string; name: string; season: number }
+export interface League    { id: string; name: string }
+export interface SeasonOption { id: string; name: string; season: number; status: string }
 export interface Division  { id: string; name: string }
 export interface TournamentOption { id: string; name: string; divisionIds: string[] }
 export interface TeamOption { id: string; name: string; divisionId: string | null }
@@ -36,6 +37,8 @@ export interface MatchRow {
 interface Props {
   matchLeagues:      League[]
   selectedLeagueId?: string
+  leagueSeasons:     SeasonOption[]
+  selectedSeasonId?: string
   leagueDivisions:   Division[]
   leagueTeams:       TeamOption[]
   matches:           MatchRow[]
@@ -217,6 +220,8 @@ function DatePickerInput({ name, defaultValue }: { name: string; defaultValue?: 
 export default function MatchesTab({
   matchLeagues,
   selectedLeagueId,
+  leagueSeasons,
+  selectedSeasonId,
   leagueDivisions,
   leagueTeams,
   matches,
@@ -233,9 +238,9 @@ export default function MatchesTab({
 
   useEffect(() => {
     if (selectedLeagueId && leagueDivisions.length === 1) {
-      router.replace(
-        `/league-management?tab=matches&leagueId=${selectedLeagueId}&divisionId=${leagueDivisions[0].id}`
-      )
+      const base = `/league-management?tab=matches&leagueId=${selectedLeagueId}`
+      const withSeason = selectedSeasonId ? `${base}&seasonId=${selectedSeasonId}` : base
+      router.replace(`${withSeason}&divisionId=${leagueDivisions[0].id}`)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLeagueId, leagueDivisions.length])
@@ -290,25 +295,42 @@ export default function MatchesTab({
   return (
     <div className="space-y-6">
 
-      {/* League picker */}
+      {/* League + Season pickers */}
       <div className="flex flex-wrap gap-2">
-        <div className="flex gap-2 flex-1 min-w-0">
+        <select
+          defaultValue={selectedLeagueId ?? ''}
+          onChange={(e) => {
+            const id = e.target.value
+            setSelectedTournamentId('')
+            if (id) router.push(`/league-management?tab=matches&leagueId=${id}`)
+            else router.push('/league-management?tab=matches')
+          }}
+          className={inputCls('flex-1 min-w-0')}
+        >
+          <option value="">— Select a league —</option>
+          {matchLeagues.map((l) => (
+            <option key={l.id} value={l.id}>{l.name}</option>
+          ))}
+        </select>
+
+        {/* Season picker — shown once a league is selected */}
+        {selectedLeagueId && leagueSeasons.length > 0 && (
           <select
-            defaultValue={selectedLeagueId ?? ''}
+            defaultValue={selectedSeasonId ?? ''}
             onChange={(e) => {
-              const id = e.target.value
+              const s = e.target.value
+              const base = `/league-management?tab=matches&leagueId=${selectedLeagueId}`
               setSelectedTournamentId('')
-              if (id) router.push(`/league-management?tab=matches&leagueId=${id}`)
-              else router.push('/league-management?tab=matches')
+              router.push(s ? `${base}&seasonId=${s}` : base)
             }}
-            className={inputCls('flex-1 min-w-0')}
+            className={inputCls('min-w-[180px]')}
           >
-            <option value="">— Select a league —</option>
-            {matchLeagues.map((l) => (
-              <option key={l.id} value={l.id}>{l.name} · S{l.season}</option>
+            <option value="">— Select a season —</option>
+            {leagueSeasons.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
-        </div>
+        )}
 
         {/* Division picker — only when league has multiple divisions */}
         {selectedLeagueId && leagueDivisions.length > 1 && (
@@ -317,7 +339,8 @@ export default function MatchesTab({
             onChange={(e) => {
               const d = e.target.value
               const base = `/league-management?tab=matches&leagueId=${selectedLeagueId}`
-              router.push(d ? `${base}&divisionId=${d}` : base)
+              const withSeason = selectedSeasonId ? `${base}&seasonId=${selectedSeasonId}` : base
+              router.push(d ? `${withSeason}&divisionId=${d}` : withSeason)
             }}
             className={inputCls('min-w-[160px]')}
           >
@@ -365,6 +388,7 @@ export default function MatchesTab({
             </summary>
             <form action={generateRoundRobin} className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3">
               <input type="hidden" name="leagueId"      value={selectedLeagueId} />
+              <input type="hidden" name="seasonId"      value={selectedSeasonId ?? ''} />
               <input type="hidden" name="divisionId"    value={divisionId} />
               <input type="hidden" name="tournamentId"  value={selectedTournamentId} />
               {divisionTeams.length < 2 ? (
@@ -409,6 +433,7 @@ export default function MatchesTab({
             ) : (
               <form action={createMatch} className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3">
                 <input type="hidden" name="leagueId"     value={selectedLeagueId} />
+                <input type="hidden" name="seasonId"     value={selectedSeasonId ?? ''} />
                 <input type="hidden" name="divisionId"   value={divisionId} />
                 <input type="hidden" name="tournamentId" value={selectedTournamentId} />
 

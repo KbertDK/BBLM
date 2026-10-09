@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 
-interface League { id: string; name: string; season: number }
+interface League { id: string; name: string }
 
 export default function LeagueFilter({
   leagues,
@@ -23,7 +23,7 @@ export default function LeagueFilter({
     >
       <option value="">All leagues</option>
       {leagues.map((l) => (
-        <option key={l.id} value={l.id}>{l.name} · S{l.season}</option>
+        <option key={l.id} value={l.id}>{l.name}</option>
       ))}
     </select>
   )

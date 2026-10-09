@@ -2,14 +2,16 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc, hireStarPlayer, removeStarPlayer, hireJourneyman, removeJourneyman, updateJourneymanNumber, hireInducement, removeInducement, markInducementUsed, markApothecaryUsed } from './actions'
-import { getRaceLogo } from '@/lib/race-logo'
+import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc, hireStarPlayer, removeStarPlayer, hireJourneyman, removeJourneyman, updateJourneymanNumber, hireInducement, removeInducement, markInducementUsed, markApothecaryUsed, rollWeather, commitPettyCash, saveFansAndFame, buySpecialPlayCard, removeSpecialPlayCard, registerSpecialPlayCard, rollKickoff } from './actions'
+import { getTeamLogo } from '@/lib/team-logo'
 import { getSspInfo } from '@/lib/ssp'
+import { spirallingExpenseFor } from '@/lib/spirallingExpenses'
+import { computePettyCashReturn } from '@/lib/postMatchFinance'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Phase          = 'prematch' | 'live' | 'postmatch'
-type CasualtyResult = 'KO' | 'BH' | 'MNG' | 'DEAD'
+type CasualtyResult = 'KO' | 'BH' | 'MNG' | 'NIGGLING' | 'DEAD'
 
 export interface MatchSkill {
   name: string
@@ -94,6 +96,7 @@ export interface MatchTeamData {
   name:     string
   coachId:  string
   raceName: string
+  logoUrl:  string | null
   players:  MatchPlayer[]
 }
 
@@ -104,10 +107,17 @@ export interface MatchData {
   wizardDone:        boolean
   homeTeamValue:     number
   awayTeamValue:     number
+  homeBaseTeamValue: number
+  awayBaseTeamValue: number
   homeTeamTreasury:  number
   awayTeamTreasury:  number
   homeTeamFanFactor: number
   awayTeamFanFactor: number
+  homeCheerleaders:     number
+  awayCheerleaders:     number
+  homeAssistantCoaches: number
+  awayAssistantCoaches: number
+  kickoffTable: { dieRoll: number; name: string; description: string }[]
   homePlayerTypes:   MercPlayerType[]
   awayPlayerTypes:   MercPlayerType[]
   homeJourneymanTypes: JourneymanPlayerType[]
@@ -122,13 +132,41 @@ export interface MatchData {
   awayHasApothecary:  boolean
   homeApothecaryUsed: boolean
   awayApothecaryUsed: boolean
+  weather:       { name: string; description: string } | null
+  homePettyCash: number
+  awayPettyCash: number
+  homeFans:      number | null
+  awayFans:      number | null
+  homeFame:      number | null
+  awayFame:      number | null
+  spirallingExpenseTiers: { teamValueThreshold: number; expenseAmount: number }[]
+  specialPlayDecks: SpecialPlayDeck[]
+  homeSpecialPlayCards: SpecialPlayCardSlot[]
+  awaySpecialPlayCards: SpecialPlayCardSlot[]
   homeTeam:          MatchTeamData
   awayTeam:          MatchTeamData
 }
 
+export interface SpecialPlayDeck {
+  id:    string
+  name:  string
+  price: number
+  cards: { id: string; cardLabel: string; name: string; description: string; timing: string; effect: string }[]
+}
+
+export interface SpecialPlayCardSlot {
+  id:       string
+  deckId:   string
+  deckName: string
+  cost:     number
+  cardId:   string | null
+  cardName: string | null
+  turn:     number | null
+}
+
 interface MatchEvent {
   id:             string
-  type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'HALFTIME' | 'CHEF' | 'SENT_OFF'
+  type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'HALFTIME' | 'CHEF' | 'SENT_OFF' | 'WEATHER' | 'SPECIAL_CARD' | 'KICKOFF'
   turn?:          number        // which turn (1–16) the event occurred on
   // TD
   scoringTeam?:   'home' | 'away'
@@ -148,8 +186,10 @@ interface GameState {
   turn:             number      // 1–16; 1–8 = 1st half, 9–16 = 2nd half
   events:           MatchEvent[]
   mvp:              { home: string | null; away: string | null }
-  winnings:         { home: number; away: number }
-  injuryOverrides:  Record<string, 'BH' | 'MNG' | 'DEAD'>   // keyed by playerId
+  injuryOverrides:  Record<string, 'BH' | 'MNG' | 'NIGGLING' | 'DEAD'>   // keyed by playerId
+  kickingTeam:      'home' | 'away' | null   // who kicks the NEXT kick-off
+  firstKickingTeam: 'home' | 'away' | null   // set once, on the match's first kick-off
+  pendingKickoff:   boolean                   // a kick-off must be resolved before play continues
 }
 
 type MedicalOption = { kind: 'apothecary' | 'matchInducement'; id?: string; label: string }
@@ -162,24 +202,82 @@ type ModalState =
   | { type: 'wizard'; step: 0 | 1 | 2 | 3; eventTurn: number | null; side: 'home' | 'away' | null; spell: 'fireball' | 'lightning' | null; victims: { playerId: string; result: CasualtyResult }[]; pendingPlayerId: string | null; pendingResult: CasualtyResult | null }
   | { type: 'sentoff'; step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; playerId: string | null; bribeId: string | null; outcome: 'success' | 'failed' | null }
   | { type: 'chef'; half: 1 | 2 | null; side: 'home' | 'away' | null; successes: number | null }
+  | { type: 'specialCard'; step: 0 | 1 | 2 | 3; eventTurn: number | null; side: 'home' | 'away' | null; slotId: string | null; cardId: string | null }
+  | {
+      type: 'kickoff'
+      step: 'confirmNeeded' | 'toss' | 'setup' | 'roll' | 'resolve'
+      isFirstKickoff:  boolean
+      tossWinner:      'home' | 'away' | null
+      kickingTeam:     'home' | 'away' | null
+      eventTurn:       number | null
+      die1:            number | ''
+      die2:            number | ''
+      // Cheering Fans (6) / Brilliant Coaching (8) — coach-vs-coach D3 comparison
+      homeCompareDie:  number | ''
+      awayCompareDie:  number | ''
+      // Changing Weather (7) — re-roll, reuses the weather table
+      weatherDie1:     number | ''
+      weatherDie2:     number | ''
+      // Riot (3)
+      riotTurn:        number | 'none' | ''
+      riotD6:          number | ''
+      // High Kick (5)
+      movedPlayerId:   string | null
+      // Blitz! (10)
+      turnoverEndedEarly: boolean
+      // Throw a Rock (11)
+      rockHomeDie:     number | ''
+      rockAwayDie:     number | ''
+      rockVictimId:    string | null
+      rockVictimId2:   string | null   // second victim, only used on a tied roll (both teams hit)
+      rockResult:      CasualtyResult | null
+      rockResult2:     CasualtyResult | null
+      // Pitch Invasion (12)
+      stunnedHomeIds:  string[]   // home players Stunned by the away coach's rolls
+      stunnedAwayIds:  string[]   // away players Stunned by the home coach's rolls
+    }
   | null
 
 interface PlayerUpdate {
-  playerId:           string
-  deltaTouchdowns:    number
-  deltaCompletePasses: number
-  deltaInterceptions: number
-  deltaCasualties:    number
-  deltaSSP:           number
-  deltaMVP:           number
-  newStatus:          'ACTIVE' | 'MNG' | 'DEAD' | null
-  isDeathPost:        boolean
+  playerId:              string
+  deltaTouchdowns:       number
+  deltaCompletePasses:   number
+  deltaInterceptions:    number
+  deltaCasualties:       number
+  deltaSSP:              number
+  deltaMVP:              number
+  deltaNigglingInjuries: number
+  newStatus:             'ACTIVE' | 'MNG' | 'DEAD' | null
+  isDeathPost:           boolean
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function uid() {
   return Math.random().toString(36).slice(2, 9)
+}
+
+function freshKickoffModal(opts: {
+  step: 'confirmNeeded' | 'toss' | 'setup'
+  isFirstKickoff: boolean
+  kickingTeam: 'home' | 'away' | null
+}): ModalState {
+  return {
+    type: 'kickoff',
+    step: opts.step,
+    isFirstKickoff: opts.isFirstKickoff,
+    tossWinner: null,
+    kickingTeam: opts.kickingTeam,
+    eventTurn: null,
+    die1: '', die2: '',
+    homeCompareDie: '', awayCompareDie: '',
+    weatherDie1: '', weatherDie2: '',
+    riotTurn: '', riotD6: '',
+    movedPlayerId: null,
+    turnoverEndedEarly: false,
+    rockHomeDie: '', rockAwayDie: '', rockVictimId: null, rockVictimId2: null, rockResult: null, rockResult2: null,
+    stunnedHomeIds: [], stunnedAwayIds: [],
+  }
 }
 
 function playerLabel(p: MatchPlayer) {
@@ -199,7 +297,15 @@ function computeScore(events: MatchEvent[]) {
   }
 }
 
-const CAS_SEVERITY: Record<CasualtyResult, number> = { KO: 0, BH: 1, MNG: 2, DEAD: 3 }
+const CAS_SEVERITY: Record<CasualtyResult, number> = { KO: 0, BH: 1, MNG: 2, NIGGLING: 2, DEAD: 3 }
+
+const WEATHER_ICON: Record<string, string> = {
+  'Sweltering Heat': '🥵',
+  'Very Sunny':       '☀️',
+  'Nice':             '⛅',
+  'Pouring Rain':     '🌧️',
+  'Blizzard':         '❄️',
+}
 
 function computePlayerUpdates(
   state: GameState,
@@ -250,13 +356,15 @@ function computePlayerUpdates(
     const effectiveCas = override ? override : computed
 
     const newStatus: 'MNG' | 'DEAD' | null =
-      effectiveCas === 'DEAD' ? 'DEAD' :
-      effectiveCas === 'MNG'  ? 'MNG'  :
+      effectiveCas === 'DEAD'     ? 'DEAD' :
+      effectiveCas === 'MNG'      ? 'MNG'  :
+      effectiveCas === 'NIGGLING' ? 'MNG'  :
       null
 
+    const deltaNigglingInjuries = !isMercOrStar && effectiveCas === 'NIGGLING' ? 1 : 0
     const isDeathPost = newStatus === 'DEAD'
 
-    if (deltaTouchdowns || deltaCompletePasses || deltaInterceptions || deltaCasualties || deltaMVP || newStatus) {
+    if (deltaTouchdowns || deltaCompletePasses || deltaInterceptions || deltaCasualties || deltaMVP || newStatus || deltaNigglingInjuries) {
       updates.push({
         playerId: p.id,
         deltaTouchdowns,
@@ -265,6 +373,7 @@ function computePlayerUpdates(
         deltaCasualties,
         deltaSSP,
         deltaMVP,
+        deltaNigglingInjuries,
         newStatus,
         isDeathPost,
       })
@@ -414,16 +523,18 @@ export default function GameOnClient({ matchData }: Props) {
   const [isPending, startTransition]   = useTransition()
   const [, persistTransition]          = useTransition()
 
-  const homeLogo = getRaceLogo(matchData.homeTeam.raceName)
-  const awayLogo = getRaceLogo(matchData.awayTeam.raceName)
+  const homeLogo = getTeamLogo(matchData.homeTeam.logoUrl, matchData.homeTeam.raceName)
+  const awayLogo = getTeamLogo(matchData.awayTeam.logoUrl, matchData.awayTeam.raceName)
 
   const defaultState = (): GameState => ({
     phase: matchData.status === 'LIVE' ? 'live' : 'prematch',
     turn:  1,
     events:          [],
     mvp:             { home: null, away: null },
-    winnings:        { home: 0, away: 0 },
     injuryOverrides: {},
+    kickingTeam:      null,
+    firstKickingTeam: null,
+    pendingKickoff:   false,
   })
 
   const [state, setState]       = useState<GameState>(defaultState)
@@ -433,16 +544,26 @@ export default function GameOnClient({ matchData }: Props) {
 
   const router = useRouter()
 
-  type WizardStep = 'petty-gold' | 'lineup' | 'inducements'
+  type WizardStep = 'weather' | 'petty-gold' | 'lineup' | 'inducements' | 'fans'
   const [wizardStep,     setWizardStep]     = useState<WizardStep>(
-    matchData.status !== 'SCHEDULED' || matchData.wizardDone ? 'inducements' : 'petty-gold'
+    matchData.status !== 'SCHEDULED' || matchData.wizardDone ? 'fans' : 'weather'
   )
-  const [homePettyGold,  setHomePettyGold]  = useState(0)
-  const [awayPettyGold,  setAwayPettyGold]  = useState(0)
+  const [homePettyGold,  setHomePettyGold]  = useState(matchData.homePettyCash)
+  const [awayPettyGold,  setAwayPettyGold]  = useState(matchData.awayPettyCash)
+  const [weatherDie1,    setWeatherDie1]    = useState<number | ''>('')
+  const [weatherDie2,    setWeatherDie2]    = useState<number | ''>('')
+  const [homeWinDie,       setHomeWinDie]       = useState<number | ''>('')
+  const [awayWinDie,       setAwayWinDie]       = useState<number | ''>('')
+  const [homeWinRerolled,  setHomeWinRerolled]  = useState(false)
+  const [awayWinRerolled,  setAwayWinRerolled]  = useState(false)
+  const [homeFansDie1,   setHomeFansDie1]   = useState<number | ''>('')
+  const [homeFansDie2,   setHomeFansDie2]   = useState<number | ''>('')
+  const [awayFansDie1,   setAwayFansDie1]   = useState<number | ''>('')
+  const [awayFansDie2,   setAwayFansDie2]   = useState<number | ''>('')
   const [wizardPending,  startWizardTransition] = useTransition()
   const [mercPending,    startMercTransition]   = useTransition()
-  const [induceTabHome,  setInduceTabHome]      = useState<'stars' | 'mercs' | 'items'>('stars')
-  const [induceTabAway,  setInduceTabAway]      = useState<'stars' | 'mercs' | 'items'>('stars')
+  const [induceTabHome,  setInduceTabHome]      = useState<'stars' | 'mercs' | 'items' | 'cards'>('stars')
+  const [induceTabAway,  setInduceTabAway]      = useState<'stars' | 'mercs' | 'items' | 'cards'>('stars')
   const [openSkillKey,   setOpenSkillKey]       = useState<string | null>(null)
 
   // Restore from localStorage after mount
@@ -461,6 +582,24 @@ export default function GameOnClient({ matchData }: Props) {
       localStorage.setItem(`match-${matchData.id}`, JSON.stringify(state))
     }
   }, [state, matchData.id, hydrated])
+
+  // Reflect the Weather roll in the local event log as soon as it's rolled (not just on a
+  // fresh mount) — `rollWeather` already persists the MatchEvent row itself, this is just for
+  // this session's own live display. Guarded by `hydrated` so it runs after any localStorage
+  // restore, and checks for an existing entry so it's safe to re-run on every matchData change.
+  useEffect(() => {
+    if (!hydrated || !matchData.weather) return
+    setState((prev) => {
+      if (prev.events.some((e) => e.id === 'weather')) return prev
+      return {
+        ...prev,
+        events: [
+          { id: 'weather', type: 'WEATHER', label: `🌦️ Weather — ${matchData.weather!.name}: ${matchData.weather!.description}` },
+          ...prev.events,
+        ],
+      }
+    })
+  }, [hydrated, matchData.weather])
 
   // Derived values
   const allPlayers = useMemo(
@@ -532,6 +671,20 @@ export default function GameOnClient({ matchData }: Props) {
   )
   const allPlaying = useMemo(() => [...homePlaying, ...awayPlaying], [homePlaying, awayPlaying])
 
+  // FAME for the Kick-Off table: base (Fans roll) + 1 per on-pitch Fan Favourite skill.
+  // CRP1 (p.18, Fan Favourite entry): this bonus applies to Kick-Off table results only —
+  // NOT to the Post-Game Winnings roll, which always uses the base Fans-roll FAME alone.
+  const homeFanFavourites = useMemo(
+    () => homePlaying.filter((p) => p.skills.some((s) => s.name === 'Fan Favourite')).length,
+    [homePlaying],
+  )
+  const awayFanFavourites = useMemo(
+    () => awayPlaying.filter((p) => p.skills.some((s) => s.name === 'Fan Favourite')).length,
+    [awayPlaying],
+  )
+  const homeKickoffFame = (matchData.homeFame ?? 0) + homeFanFavourites
+  const awayKickoffFame = (matchData.awayFame ?? 0) + awayFanFavourites
+
   // ── Event mutators ─────────────────────────────────────────────────────────
 
   function pushEvent(event: MatchEvent) {
@@ -552,6 +705,16 @@ export default function GameOnClient({ matchData }: Props) {
 
   function handleComplete() {
     const allUpdates = computePlayerUpdates(state, allPlayers)
+
+    const homeWon  = score.home > score.away
+    const awayWon  = score.away > score.home
+    const isDraw   = score.home === score.away
+    const homeWinnings = (matchData.homeFame !== null && homeWinDie !== '')
+      ? (homeWinDie + matchData.homeFame) * 10000 + (homeWon || isDraw ? 10000 : 0)
+      : 0
+    const awayWinnings = (matchData.awayFame !== null && awayWinDie !== '')
+      ? (awayWinDie + matchData.awayFame) * 10000 + (awayWon || isDraw ? 10000 : 0)
+      : 0
 
     // Roster players (real TeamPlayer rows): full career-stat increments, as before.
     const playerUpdates = allUpdates.filter((u) => {
@@ -599,8 +762,8 @@ export default function GameOnClient({ matchData }: Props) {
       matchId:      matchData.id,
       homeScore:    score.home,
       awayScore:    score.away,
-      homeWinnings: state.winnings.home,
-      awayWinnings: state.winnings.away,
+      homeWinnings,
+      awayWinnings,
       playerUpdates,
       journeymanUpdates,
       mercUpdates,
@@ -625,6 +788,124 @@ export default function GameOnClient({ matchData }: Props) {
       ? `T${eventTurn} · TD · ${playerLabel(scorer!)} (${teamName}) — pass from ${playerLabel(passer)}`
       : `T${eventTurn} · TD · ${playerLabel(scorer!)} (${teamName})`
     pushEvent({ id: uid(), type: 'TD', turn: eventTurn, scoringTeam: team, scorerId, passerId: passer ? passerId! : undefined, label })
+    // CRP1: the scoring team always kicks off next, if the half isn't over.
+    setModal(freshKickoffModal({ step: 'confirmNeeded', isFirstKickoff: false, kickingTeam: team }))
+  }
+
+  function pushKickoffEvent(event: MatchEvent, dieRoll: number) {
+    setState((prev) => ({ ...prev, events: [...prev.events, event] }))
+    persistTransition(async () => { await rollKickoff(matchData.id, dieRoll, event.label) })
+  }
+
+  function commitKickoff() {
+    if (modal?.type !== 'kickoff') return
+    const m = modal
+    if (!m.kickingTeam || m.die1 === '' || m.die2 === '') return
+    const dieRoll = m.die1 + m.die2
+    const result = matchData.kickoffTable.find((r) => r.dieRoll === dieRoll)
+    if (!result) return
+
+    const receivingTeam = m.kickingTeam === 'home' ? 'away' : 'home'
+    const kickingName   = m.kickingTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    const receivingName = receivingTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    const teamName = (side: 'home' | 'away') => side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+
+    let detail = ''
+
+    if (dieRoll === 2) {
+      detail = 'both teams receive 1 extra Bribe for this match'
+    } else if (dieRoll === 3) {
+      if (m.riotTurn === 'none') {
+        detail = "receiving team hasn't taken a turn this half — both turn markers move forward 1 space"
+      } else if (m.riotTurn === 7) {
+        detail = "receiving team is on turn 7 — both turn markers move back 1 space"
+      } else if (m.riotD6 !== '') {
+        const forward = m.riotD6 <= 3
+        detail = `D6 ${m.riotD6} — both turn markers move ${forward ? 'forward' : 'back'} 1 space`
+      }
+    } else if (dieRoll === 4) {
+      detail = `${kickingName} may reorganise their defence`
+    } else if (dieRoll === 5) {
+      const moved = m.movedPlayerId ? playerById.get(m.movedPlayerId) : null
+      detail = moved ? `${playerLabel(moved)} repositioned to the landing square` : 'no player repositioned'
+    } else if (dieRoll === 6 || dieRoll === 8) {
+      const isCheer = dieRoll === 6
+      const homeBonus = isCheer ? matchData.homeCheerleaders : matchData.homeAssistantCoaches
+      const awayBonus = isCheer ? matchData.awayCheerleaders : matchData.awayAssistantCoaches
+      const homeTotal = (m.homeCompareDie || 0) + homeKickoffFame + homeBonus
+      const awayTotal = (m.awayCompareDie || 0) + awayKickoffFame + awayBonus
+      const bonusLabel = isCheer ? 'Cheer' : 'Coach'
+      const winner = homeTotal > awayTotal ? 'home' : awayTotal > homeTotal ? 'away' : 'tie'
+      detail = `Home D3${m.homeCompareDie}+FAME${homeKickoffFame}+${bonusLabel}${homeBonus}=${homeTotal} vs Away D3${m.awayCompareDie}+FAME${awayKickoffFame}+${bonusLabel}${awayBonus}=${awayTotal} → `
+        + (winner === 'tie' ? 'both teams gain an extra re-roll this half' : `${teamName(winner)} gains an extra re-roll this half`)
+    } else if (dieRoll === 7) {
+      detail = 're-rolling the weather…'
+    } else if (dieRoll === 9) {
+      detail = `${receivingName}'s players may each make one free square of movement`
+    } else if (dieRoll === 10) {
+      detail = `${kickingName} gets a free bonus turn` + (m.turnoverEndedEarly ? ' (ended early by a turnover)' : '')
+    } else if (dieRoll === 11) {
+      const homeTotal = (m.rockHomeDie || 0) + homeKickoffFame
+      const awayTotal = (m.rockAwayDie || 0) + awayKickoffFame
+      const tie = homeTotal === awayTotal
+      const thrower = tie ? null : homeTotal > awayTotal ? 'home' : 'away'
+      const parts: string[] = [`Home D6${m.rockHomeDie}+FAME${homeKickoffFame}=${homeTotal} vs Away D6${m.rockAwayDie}+FAME${awayKickoffFame}=${awayTotal}`]
+      if (tie) {
+        parts.push('tie — a rock is thrown at each team')
+        if (m.rockVictimId) {
+          const v = playerById.get(m.rockVictimId)
+          if (v) parts.push(`${teamName('home')}: ${playerLabel(v)} hit [${m.rockResult ?? '?'}]`)
+        }
+        if (m.rockVictimId2) {
+          const v2 = playerById.get(m.rockVictimId2)
+          if (v2) parts.push(`${teamName('away')}: ${playerLabel(v2)} hit [${m.rockResult2 ?? '?'}]`)
+        }
+      } else {
+        const hitSide = thrower === 'home' ? 'away' : 'home'
+        parts.push(`${teamName(thrower!)}'s fans threw the rock`)
+        if (m.rockVictimId) {
+          const v = playerById.get(m.rockVictimId)
+          if (v) parts.push(`${teamName(hitSide)}: ${playerLabel(v)} hit [${m.rockResult ?? '?'}]`)
+        }
+      }
+      detail = parts.join(' · ')
+    } else if (dieRoll === 12) {
+      const homeNames = m.stunnedHomeIds.map((id) => playerById.get(id)).filter(Boolean).map((p) => playerLabel(p!))
+      const awayNames = m.stunnedAwayIds.map((id) => playerById.get(id)).filter(Boolean).map((p) => playerLabel(p!))
+      detail = `Home Stunned: ${homeNames.length ? homeNames.join(', ') : 'none'} · Away Stunned: ${awayNames.length ? awayNames.join(', ') : 'none'}`
+    }
+
+    const label = `🏈 Kick-Off${m.eventTurn ? ` (T${m.eventTurn})` : ''} — ${kickingName} kicks, ${receivingName} receives · ${result.name}${detail ? `: ${detail}` : ''}`
+    pushKickoffEvent({ id: uid(), type: 'KICKOFF', turn: m.eventTurn ?? undefined, label }, dieRoll)
+
+    // Throw a Rock resolves straight to the Casualty table (no Armour roll) — log it as a real
+    // casualty too, so it flows through post-match stats/niggling tracking like any other.
+    if (dieRoll === 11) {
+      const homeTotal = (m.rockHomeDie || 0) + homeKickoffFame
+      const awayTotal = (m.rockAwayDie || 0) + awayKickoffFame
+      const tie = homeTotal === awayTotal
+      if (m.rockVictimId && m.rockResult) {
+        const v = playerById.get(m.rockVictimId)
+        pushEvent({ id: uid(), type: 'CASUALTY', turn: m.eventTurn ?? undefined, victimId: m.rockVictimId, casualtyResult: m.rockResult,
+          label: `T${m.eventTurn ?? '?'} · 🪨 Throw a Rock → ${v ? playerLabel(v) : '?'} [${m.rockResult}]` })
+      }
+      if (tie && m.rockVictimId2 && m.rockResult2) {
+        const v2 = playerById.get(m.rockVictimId2)
+        pushEvent({ id: uid(), type: 'CASUALTY', turn: m.eventTurn ?? undefined, victimId: m.rockVictimId2, casualtyResult: m.rockResult2,
+          label: `T${m.eventTurn ?? '?'} · 🪨 Throw a Rock → ${v2 ? playerLabel(v2) : '?'} [${m.rockResult2}]` })
+      }
+    }
+
+    if (dieRoll === 7 && m.weatherDie1 !== '' && m.weatherDie2 !== '') {
+      persistTransition(async () => { await rollWeather(matchData.id, m.weatherDie1 as number, m.weatherDie2 as number) })
+    }
+
+    setState((prev) => ({
+      ...prev,
+      kickingTeam: m.kickingTeam,
+      firstKickingTeam: prev.firstKickingTeam ?? m.kickingTeam,
+      pendingKickoff: false,
+    }))
     setModal(null)
   }
 
@@ -738,6 +1019,27 @@ export default function GameOnClient({ matchData }: Props) {
     setModal(null)
   }
 
+  function commitSpecialPlayCard() {
+    if (modal?.type !== 'specialCard') return
+    const { side, slotId, cardId, eventTurn } = modal
+    if (!side || !slotId || !cardId || !eventTurn) return
+    const teamName = side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    const slots    = side === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards
+    const slot     = slots.find((s) => s.id === slotId)
+    const deck     = matchData.specialPlayDecks.find((d) => d.id === slot?.deckId)
+    const card     = deck?.cards.find((c) => c.id === cardId)
+    if (!slot || !card) return
+    pushEvent({
+      id: uid(), type: 'SPECIAL_CARD', turn: eventTurn,
+      label: `T${eventTurn} · 🃏 ${teamName} plays ${card.name} (${deck!.name})`,
+    })
+    startMercTransition(async () => {
+      await registerSpecialPlayCard(matchData.id, slotId, cardId, eventTurn)
+      router.refresh()
+    })
+    setModal(null)
+  }
+
   // ── Injury victims for Post-Match review ──────────────────────────────────
 
   const injuredPlayers = useMemo(() => {
@@ -803,14 +1105,16 @@ export default function GameOnClient({ matchData }: Props) {
   // ─────────────────────────────────────────────────────────────────────────
 
   if (state.phase === 'prematch') {
-    const homeBase = matchData.homeTeamValue + homePettyGold / 1000
-    const awayBase = matchData.awayTeamValue + awayPettyGold / 1000
+    // Inducement gold gap: struck from the frozen roster-only value, not the evolving one —
+    // otherwise each purchase raises team value and shrinks the very budget it's paid from.
+    const homeBase = matchData.homeBaseTeamValue + homePettyGold / 1000
+    const awayBase = matchData.awayBaseTeamValue + awayPettyGold / 1000
     const diff         = Math.abs(homeBase - awayBase)
     const inducementGp = Math.round(diff * 1000)
     const receivingTeam: 'home' | 'away' | null =
       homeBase < awayBase ? 'home' : awayBase < homeBase ? 'away' : null
 
-    function handleConfirmInducementsAndKickOff() {
+    function handleConfirmInducements() {
       startWizardTransition(async () => {
         await savePrematchData(matchData.id, {
           homeTeamValue:     matchData.homeTeamValue,
@@ -818,8 +1122,18 @@ export default function GameOnClient({ matchData }: Props) {
           homeTeamFanFactor: matchData.homeTeamFanFactor,
           awayTeamFanFactor: matchData.awayTeamFanFactor,
         })
+        setWizardStep('fans')
+      })
+    }
+
+    function handleConfirmFansAndKickOff() {
+      startWizardTransition(async () => {
+        if (homeFansDie1 !== '' && homeFansDie2 !== '' && awayFansDie1 !== '' && awayFansDie2 !== '') {
+          await saveFansAndFame(matchData.id, homeFansDie1, homeFansDie2, awayFansDie1, awayFansDie2)
+        }
         try { await startMatch(matchData.id) } catch {}
-        setState((prev) => ({ ...prev, phase: 'live' }))
+        setState((prev) => ({ ...prev, phase: 'live', pendingKickoff: true }))
+        setModal(freshKickoffModal({ step: 'toss', isFirstKickoff: true, kickingTeam: null }))
       })
     }
 
@@ -830,7 +1144,7 @@ export default function GameOnClient({ matchData }: Props) {
           <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
           <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Wizard</h1>
           <div className="flex gap-2 mt-3">
-            {(['petty-gold', 'lineup', 'inducements'] as const).map((s, i, arr) => (
+            {(['weather', 'petty-gold', 'lineup', 'inducements', 'fans'] as const).map((s, i, arr) => (
               <div key={s} className="flex items-center gap-2">
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-heading font-bold border ${
                   wizardStep === s
@@ -838,7 +1152,7 @@ export default function GameOnClient({ matchData }: Props) {
                     : 'border-bb-border text-bb-muted'
                 }`}>{i + 1}</div>
                 <span className={`text-xs font-heading uppercase tracking-wider ${wizardStep === s ? 'text-bb-gold' : 'text-bb-muted'}`}>
-                  {s === 'petty-gold' ? 'Petty Gold' : s === 'lineup' ? 'Lineup' : 'Inducements'}
+                  {s === 'weather' ? 'Weather' : s === 'petty-gold' ? 'Petty Gold' : s === 'lineup' ? 'Lineup' : s === 'inducements' ? 'Inducements' : 'Fans & FAME'}
                 </span>
                 {i < arr.length - 1 && <span className="text-bb-border text-xs">›</span>}
               </div>
@@ -846,7 +1160,56 @@ export default function GameOnClient({ matchData }: Props) {
           </div>
         </div>
 
-        {/* Step 1: Petty Gold */}
+        {/* Step 1: Weather */}
+        {wizardStep === 'weather' && (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
+            {matchData.weather ? (
+              <div className="text-center">
+                <div className="text-6xl mb-3">{WEATHER_ICON[matchData.weather.name] ?? '🌦️'}</div>
+                <h2 className="font-heading text-2xl font-bold text-bb-gold">{matchData.weather.name}</h2>
+                <p className="text-sm text-bb-muted mt-2 max-w-md">{matchData.weather.description}</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-bb-muted text-center max-w-sm">
+                  Both coaches roll a D6 and add the results together to see what the weather is like for the match.
+                </p>
+                <div className="flex items-center gap-3">
+                  <select value={weatherDie1} onChange={(e) => setWeatherDie1(e.target.value ? parseInt(e.target.value, 10) : '')}
+                    className="bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold">
+                    <option value="" disabled>D1</option>
+                    {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <span className="text-bb-muted">+</span>
+                  <select value={weatherDie2} onChange={(e) => setWeatherDie2(e.target.value ? parseInt(e.target.value, 10) : '')}
+                    className="bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold">
+                    <option value="" disabled>D2</option>
+                    {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <button
+                    disabled={wizardPending || weatherDie1 === '' || weatherDie2 === ''}
+                    onClick={() => startWizardTransition(async () => {
+                      await rollWeather(matchData.id, weatherDie1 as number, weatherDie2 as number)
+                      router.refresh()
+                    })}
+                    className="px-6 py-2 bg-bb-gold hover:bg-bb-gold-dim text-bb-dark font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                    {wizardPending ? 'Rolling…' : 'Roll'}
+                  </button>
+                </div>
+              </>
+            )}
+            <div className="flex justify-end w-full pt-6">
+              <button
+                onClick={() => setWizardStep('petty-gold')}
+                disabled={!matchData.weather}
+                className="px-8 py-3 bg-bb-gold hover:bg-bb-gold-dim text-bb-dark font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                Next →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Petty Gold */}
         {wizardStep === 'petty-gold' && (
           <div className="flex-1 flex flex-col p-6">
             <p className="text-sm text-bb-muted mb-6">
@@ -860,7 +1223,11 @@ export default function GameOnClient({ matchData }: Props) {
                 const petty    = side === 'home' ? homePettyGold : awayPettyGold
                 const setPetty = side === 'home' ? setHomePettyGold : setAwayPettyGold
                 const logo     = side === 'home' ? homeLogo : awayLogo
-                const overMax  = petty > treasury
+                // Current treasury already reflects any previously-committed Petty Cash for this
+                // side, so the true ceiling for a revised amount is treasury + what's already committed.
+                const committed = side === 'home' ? matchData.homePettyCash : matchData.awayPettyCash
+                const maxPetty  = treasury + committed
+                const overMax   = petty > maxPetty
 
                 return (
                   <div key={side} className={`bg-bb-dark border rounded-sm p-5 flex flex-col gap-4 ${overMax ? 'border-bb-crimson' : 'border-bb-border'}`}>
@@ -892,7 +1259,7 @@ export default function GameOnClient({ matchData }: Props) {
                       <input
                         type="number"
                         min={0}
-                        max={treasury}
+                        max={maxPetty}
                         step={1000}
                         value={petty}
                         onChange={(e) => setPetty(Math.max(0, parseInt(e.target.value) || 0))}
@@ -901,10 +1268,10 @@ export default function GameOnClient({ matchData }: Props) {
                         }`}
                       />
                       {overMax && (
-                        <p className="text-xs text-bb-crimson mt-1">Cannot exceed treasury ({treasury.toLocaleString()} gp)</p>
+                        <p className="text-xs text-bb-crimson mt-1">Cannot exceed treasury ({maxPetty.toLocaleString()} gp)</p>
                       )}
                       {!overMax && petty > 0 && (
-                        <p className="text-xs text-bb-muted/70 mt-1">Remaining: {(treasury - petty).toLocaleString()} gp</p>
+                        <p className="text-xs text-bb-muted/70 mt-1">Remaining: {(maxPetty - petty).toLocaleString()} gp</p>
                       )}
                     </div>
                   </div>
@@ -913,17 +1280,21 @@ export default function GameOnClient({ matchData }: Props) {
             </div>
             <div className="flex justify-end pt-6">
               <button
-                onClick={() => setWizardStep('lineup')}
-                disabled={homePettyGold > matchData.homeTeamTreasury || awayPettyGold > matchData.awayTeamTreasury}
+                onClick={() => startWizardTransition(async () => {
+                  await commitPettyCash(matchData.id, homePettyGold, awayPettyGold)
+                  router.refresh()
+                  setWizardStep('lineup')
+                })}
+                disabled={wizardPending || homePettyGold > matchData.homeTeamTreasury + matchData.homePettyCash || awayPettyGold > matchData.awayTeamTreasury + matchData.awayPettyCash}
                 className="px-8 py-3 bg-bb-gold hover:bg-bb-gold-dim text-bb-dark font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Next →
+                {wizardPending ? 'Saving…' : 'Next →'}
               </button>
             </div>
           </div>
         )}
 
-        {/* Step 2: Lineup */}
+        {/* Step 3: Lineup */}
         {wizardStep === 'lineup' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="px-6 pt-5 shrink-0">
@@ -1064,7 +1435,7 @@ export default function GameOnClient({ matchData }: Props) {
           </div>
         )}
 
-        {/* Step 3: Inducements + Basket */}
+        {/* Step 4: Inducements + Basket */}
         {wizardStep === 'inducements' && (() => {
           const homeBudget   = (receivingTeam === 'home' ? inducementGp : 0) + homePettyGold
           const awayBudget   = (receivingTeam === 'away' ? inducementGp : 0) + awayPettyGold
@@ -1072,8 +1443,10 @@ export default function GameOnClient({ matchData }: Props) {
           const awayShopping = awayBudget > 0
           const homeSpent     = matchData.homeTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
                               + matchData.homeInducementsPurchased.reduce((s, p) => s + p.cost, 0)
+                              + matchData.homeSpecialPlayCards.reduce((s, p) => s + p.cost, 0)
           const awaySpent     = matchData.awayTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
                               + matchData.awayInducementsPurchased.reduce((s, p) => s + p.cost, 0)
+                              + matchData.awaySpecialPlayCards.reduce((s, p) => s + p.cost, 0)
           const homeRemaining = homeBudget - homeSpent
           const awayRemaining = awayBudget - awaySpent
 
@@ -1091,8 +1464,10 @@ export default function GameOnClient({ matchData }: Props) {
             const hiredMercs  = players.filter((p) => p.isMerc && !p.isStarPlayer)
             const hiredStars  = players.filter((p) => p.isStarPlayer)
             const hiredStarIds = new Set(hiredStars.map((p) => p.starPlayerId).filter(Boolean))
+            const specialCards = side === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards
             const spent       = [...hiredMercs, ...hiredStars].reduce((s, p) => s + (p.mercCost ?? 0), 0)
                               + purchased.reduce((s, p) => s + p.cost, 0)
+                              + specialCards.reduce((s, p) => s + p.cost, 0)
             const remaining   = budget - spent
 
             return (
@@ -1116,7 +1491,7 @@ export default function GameOnClient({ matchData }: Props) {
                     <div className="bg-bb-dark border border-bb-border rounded-sm flex flex-col overflow-hidden">
                       {/* Tabs */}
                       <div className="flex border-b border-bb-border shrink-0">
-                        {(['stars', 'mercs', 'items'] as const).map((t) => (
+                        {(['stars', 'mercs', 'items', 'cards'] as const).map((t) => (
                           <button
                             key={t}
                             onClick={() => setTab(t)}
@@ -1126,7 +1501,7 @@ export default function GameOnClient({ matchData }: Props) {
                                 : 'text-bb-muted hover:text-white'
                             }`}
                           >
-                            {t === 'stars' ? `⭐ Stars (${starPlayers.length})` : t === 'mercs' ? `⚔ Mercs (${playerTypes.length})` : `🎁 Items (${items.length})`}
+                            {t === 'stars' ? `⭐ Stars (${starPlayers.length})` : t === 'mercs' ? `⚔ Mercs (${playerTypes.length})` : t === 'items' ? `🎁 Items (${items.length})` : `🃏 Cards (${matchData.specialPlayDecks.length})`}
                           </button>
                         ))}
                       </div>
@@ -1289,6 +1664,45 @@ export default function GameOnClient({ matchData }: Props) {
                             </div>
                           )
                         })}
+                        {tab === 'cards' && matchData.specialPlayDecks.map((deck) => {
+                          const affordable = deck.price <= remaining
+                          const key        = `deck-${deck.id}||rule`
+                          const isOpen     = openSkillKey === key
+                          return (
+                            <div key={deck.id} className={`px-4 py-3 ${!affordable ? 'opacity-40' : ''}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white font-heading leading-tight">{deck.name}</p>
+                                  <p className="font-mono text-[11px] text-bb-muted mt-0.5">{deck.cards.length} cards — random draw</p>
+                                  <button onClick={() => setOpenSkillKey(isOpen ? null : key)} className={`mt-1.5 text-[10px] px-1.5 py-1 rounded-sm border font-heading transition-colors touch-manipulation min-h-[28px] ${
+                                    isOpen
+                                      ? 'border-bb-gold text-bb-gold bg-bb-gold/15'
+                                      : 'bg-bb-gold/10 border-bb-gold/30 text-bb-gold'
+                                  }`}>{isOpen ? 'Hide Cards' : 'View Cards'}</button>
+                                  {isOpen && (
+                                    <div className="mt-1.5 text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2 max-h-48 overflow-y-auto space-y-1">
+                                      {deck.cards.map((c) => (
+                                        <p key={c.id}><span className="text-bb-gold">{c.cardLabel}</span> — {c.name}</p>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="shrink-0 text-right">
+                                  <p className="font-mono text-xs text-white">{deck.price.toLocaleString()}</p>
+                                  <p className="font-mono text-[10px] text-bb-muted">gp</p>
+                                  <button
+                                    disabled={!affordable || mercPending}
+                                    onClick={() => startMercTransition(async () => {
+                                      await buySpecialPlayCard(matchData.id, side, deck.id)
+                                      router.refresh()
+                                    })}
+                                    className="mt-1.5 px-2.5 py-1 text-[11px] font-heading uppercase tracking-wider rounded-sm border border-bb-gold/60 text-bb-gold hover:bg-bb-gold hover:text-bb-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                  >Draw</button>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
 
@@ -1298,7 +1712,7 @@ export default function GameOnClient({ matchData }: Props) {
                         <span className="text-xs font-heading uppercase tracking-wider text-bb-gold">Basket</span>
                       </div>
                       <div className="flex-1 overflow-y-auto divide-y divide-bb-border/30">
-                        {hiredMercs.length === 0 && hiredStars.length === 0 && purchased.length === 0 && (
+                        {hiredMercs.length === 0 && hiredStars.length === 0 && purchased.length === 0 && specialCards.length === 0 && (
                           <p className="text-bb-muted text-xs italic px-4 py-4">No inducements hired yet.</p>
                         )}
                         {/* Generic items */}
@@ -1433,7 +1847,7 @@ export default function GameOnClient({ matchData }: Props) {
 
               {(homePlaying.length > 16 || awayPlaying.length > 16) && (
                 <p className="text-xs text-bb-crimson shrink-0">
-                  A team has more than 16 active players — go back to Lineup and resolve this before kicking off.
+                  A team has more than 16 active players — go back to Lineup and resolve this before continuing.
                 </p>
               )}
 
@@ -1445,8 +1859,80 @@ export default function GameOnClient({ matchData }: Props) {
                   ← Back
                 </button>
                 <button
-                  onClick={handleConfirmInducementsAndKickOff}
+                  onClick={handleConfirmInducements}
                   disabled={wizardPending || (homeShopping && homeRemaining < 0) || (awayShopping && awayRemaining < 0) || homePlaying.length > 16 || awayPlaying.length > 16}
+                  className="px-8 py-3 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-50"
+                >
+                  {wizardPending ? 'Saving…' : 'Next →'}
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Step 5: Fans & FAME */}
+        {wizardStep === 'fans' && (() => {
+          const fansReady = homeFansDie1 !== '' && homeFansDie2 !== '' && awayFansDie1 !== '' && awayFansDie2 !== ''
+          const alreadyRolled = matchData.homeFame !== null && matchData.awayFame !== null
+          return (
+            <div className="flex-1 flex flex-col p-6 gap-6">
+              <p className="text-sm text-bb-muted">
+                Both coaches roll 2D6 and add their team&apos;s Fan Factor to see how many fans turned up — this determines each team&apos;s FAME (Fan Advantage Modifier), used for the Kick-Off table and post-match winnings.
+              </p>
+              {alreadyRolled ? (
+                <div className="grid grid-cols-2 gap-4">
+                  {(['home', 'away'] as const).map((side) => {
+                    const teamName = side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+                    const fans = side === 'home' ? matchData.homeFans : matchData.awayFans
+                    const fame = side === 'home' ? matchData.homeFame : matchData.awayFame
+                    return (
+                      <div key={side} className="bg-bb-dark border border-bb-border rounded-sm p-4 text-center">
+                        <h3 className="font-heading text-sm font-bold text-bb-gold">{teamName}</h3>
+                        <p className="text-xs text-bb-muted mt-1">{(fans ?? 0).toLocaleString()} fans</p>
+                        <p className="text-lg font-heading font-black text-white mt-1">FAME +{fame}</p>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  {(['home', 'away'] as const).map((side) => {
+                    const teamName = side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+                    const die1 = side === 'home' ? homeFansDie1 : awayFansDie1
+                    const die2 = side === 'home' ? homeFansDie2 : awayFansDie2
+                    const setDie1 = side === 'home' ? setHomeFansDie1 : setAwayFansDie1
+                    const setDie2 = side === 'home' ? setHomeFansDie2 : setAwayFansDie2
+                    return (
+                      <div key={side} className="bg-bb-dark border border-bb-border rounded-sm p-4">
+                        <h3 className="font-heading text-sm font-bold text-bb-gold mb-2">{teamName}</h3>
+                        <div className="flex items-center gap-2">
+                          <select value={die1} onChange={(e) => setDie1(e.target.value ? parseInt(e.target.value, 10) : '')}
+                            className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1.5 text-sm text-white focus:outline-none focus:border-bb-gold">
+                            <option value="" disabled>D1</option>
+                            {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                          <span className="text-bb-muted">+</span>
+                          <select value={die2} onChange={(e) => setDie2(e.target.value ? parseInt(e.target.value, 10) : '')}
+                            className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1.5 text-sm text-white focus:outline-none focus:border-bb-gold">
+                            <option value="" disabled>D2</option>
+                            {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex justify-between pt-6">
+                <button
+                  onClick={() => setWizardStep('inducements')}
+                  className="px-6 py-3 border border-bb-border text-bb-muted hover:text-white hover:border-bb-muted rounded-sm font-heading tracking-widest uppercase text-sm transition-colors"
+                >
+                  ← Back
+                </button>
+                <button
+                  onClick={handleConfirmFansAndKickOff}
+                  disabled={wizardPending || (!alreadyRolled && !fansReady) || homePlaying.length > 16 || awayPlaying.length > 16}
                   className="px-8 py-3 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-50"
                 >
                   {wizardPending ? 'Saving…' : '⚔ Confirm & Kick Off!'}
@@ -1480,6 +1966,8 @@ export default function GameOnClient({ matchData }: Props) {
       .some((p) => p.name === 'Wizards' && !p.used)
     const chefAvailable = [...matchData.homeInducementsPurchased, ...matchData.awayInducementsPurchased]
       .some((p) => p.name === 'Halfling Master Chef' && (!p.chefHalf1Used || !p.chefHalf2Used))
+    const cardAvailable = [...matchData.homeSpecialPlayCards, ...matchData.awaySpecialPlayCards]
+      .some((c) => !c.cardId)
 
     return (
       <div className="min-h-screen bg-bb-darker text-white flex flex-col">
@@ -1521,12 +2009,57 @@ export default function GameOnClient({ matchData }: Props) {
               <div className="font-heading text-lg font-bold text-white text-left pl-3">{kills.away}</div>
             </div>
 
+            {/* FAME row — Kick-Off table FAME (base Fans roll + Fan Favourite); Winnings use base FAME only */}
+            <div className="grid grid-cols-[1fr_auto_1fr] w-full items-center">
+              <button type="button" onClick={() => setOpenSkillKey(openSkillKey === 'fame-home' ? null : 'fame-home')}
+                className="text-right pr-3 touch-manipulation">
+                <span className="font-heading text-lg font-bold text-white">{homeKickoffFame}</span>
+                {homeFanFavourites > 0 && <span className="text-[10px] text-bb-gold ml-1">(+{homeFanFavourites} FF)</span>}
+              </button>
+              <div className="text-[11px] text-bb-muted font-heading tracking-wide w-16 text-center">FAME</div>
+              <button type="button" onClick={() => setOpenSkillKey(openSkillKey === 'fame-away' ? null : 'fame-away')}
+                className="text-left pl-3 touch-manipulation">
+                <span className="font-heading text-lg font-bold text-white">{awayKickoffFame}</span>
+                {awayFanFavourites > 0 && <span className="text-[10px] text-bb-gold ml-1">(+{awayFanFavourites} FF)</span>}
+              </button>
+            </div>
+            {openSkillKey === 'fame-home' && (
+              <p className="text-[10px] text-bb-muted text-center px-4 leading-snug">
+                {homeFanFavourites > 0
+                  ? `${matchData.homeFame ?? 0} from the Fans roll + ${homeFanFavourites} from Fan Favourite — Kick-Off table only, not Winnings`
+                  : 'From the Fans roll'}
+              </p>
+            )}
+            {openSkillKey === 'fame-away' && (
+              <p className="text-[10px] text-bb-muted text-center px-4 leading-snug">
+                {awayFanFavourites > 0
+                  ? `${matchData.awayFame ?? 0} from the Fans roll + ${awayFanFavourites} from Fan Favourite — Kick-Off table only, not Winnings`
+                  : 'From the Fans roll'}
+              </p>
+            )}
+
             {/* Half indicator */}
             <div className="mt-1">
               <span className="text-[10px] text-bb-muted/60 font-heading uppercase tracking-widest">
                 {hasHalftime ? '2nd Half' : '1st Half'}
               </span>
             </div>
+
+            {/* Weather badge — easy-to-see reminder of the match's current conditions */}
+            {matchData.weather && (
+              <>
+                <button type="button" onClick={() => setOpenSkillKey(openSkillKey === 'weather' ? null : 'weather')}
+                  className="mt-1 flex items-center gap-1 px-2 py-0.5 rounded-sm border border-bb-border/60 bg-bb-darker touch-manipulation">
+                  <span className="text-sm">{WEATHER_ICON[matchData.weather.name] ?? '🌦️'}</span>
+                  <span className="text-[10px] text-bb-muted font-heading uppercase tracking-wider">{matchData.weather.name}</span>
+                </button>
+                {openSkillKey === 'weather' && (
+                  <p className="text-[10px] text-bb-muted text-center px-4 leading-snug mt-1 max-w-xs">
+                    {matchData.weather.description}
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           {awayLogo && (
@@ -1577,6 +2110,13 @@ export default function GameOnClient({ matchData }: Props) {
               </button>
             )}
 
+            {cardAvailable && (
+              <button onClick={() => setModal({ type: 'specialCard', step: 0, eventTurn: null, side: null, slotId: null, cardId: null })}
+                className={btnGhost + ' text-left'}>
+                <span className="text-base">🃏</span> Special Card
+              </button>
+            )}
+
             <div className="mt-auto space-y-2 pt-4 border-t border-bb-border">
               <button onClick={() => setModal({ type: 'inducements' })}
                 className={btnGhost + ' w-full justify-center'}>
@@ -1585,6 +2125,11 @@ export default function GameOnClient({ matchData }: Props) {
               {!hasHalftime && (
                 <button onClick={() => {
                   pushEvent({ id: uid(), type: 'HALFTIME', label: '─── Half Time ───' })
+                  // CRP1: whoever didn't kick in the 1st half automatically kicks in the 2nd —
+                  // no new coin toss.
+                  const secondHalfKicker = state.firstKickingTeam === 'home' ? 'away' : 'home'
+                  setState((prev) => ({ ...prev, pendingKickoff: true }))
+                  setModal(freshKickoffModal({ step: 'setup', isFirstKickoff: false, kickingTeam: secondHalfKicker }))
                 }} className={btnGhost + ' w-full justify-center'}>
                   ⛔ Half Time
                 </button>
@@ -1621,6 +2166,10 @@ export default function GameOnClient({ matchData }: Props) {
                         ? 'border-bb-gold/30 bg-bb-gold/5 text-white'
                         : event.type === 'CASUALTY'
                         ? 'border-bb-crimson/30 bg-bb-crimson/5 text-white'
+                        : event.type === 'SPECIAL_CARD'
+                        ? 'border-purple-700/40 bg-purple-900/10 text-white'
+                        : event.type === 'KICKOFF'
+                        ? 'border-sky-700/40 bg-sky-900/10 text-white'
                         : 'border-bb-border/50 text-bb-muted'
                     }`}>
                     {event.label}
@@ -1803,14 +2352,14 @@ export default function GameOnClient({ matchData }: Props) {
               <>
                 <p className="text-bb-muted text-sm">Injury result:</p>
                 <div className="grid grid-cols-2 gap-2">
-                  {(['KO', 'BH', 'MNG', 'DEAD'] as CasualtyResult[]).map((r) => (
+                  {(['KO', 'BH', 'MNG', 'NIGGLING', 'DEAD'] as CasualtyResult[]).map((r) => (
                     <button key={r} onClick={() => setModal({ ...modal, result: r })}
                       className={`p-3 rounded-sm border text-sm font-heading font-bold uppercase tracking-wider transition-colors ${
                         modal.result === r
                           ? 'bg-bb-crimson border-bb-crimson text-white'
                           : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
                       }`}>
-                      {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : '💀 Dead'}
+                      {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : r === 'NIGGLING' ? '🩹 Niggling' : '💀 Dead'}
                     </button>
                   ))}
                 </div>
@@ -1992,12 +2541,12 @@ export default function GameOnClient({ matchData }: Props) {
                 </select>
                 {modal.pendingPlayerId && (
                   <div className="grid grid-cols-2 gap-2">
-                    {(['KO', 'BH', 'MNG', 'DEAD'] as CasualtyResult[]).map((r) => (
+                    {(['KO', 'BH', 'MNG', 'NIGGLING', 'DEAD'] as CasualtyResult[]).map((r) => (
                       <button key={r} onClick={() => setModal({ ...modal, pendingResult: r })}
                         className={`p-3 rounded-sm border text-sm font-heading font-bold uppercase tracking-wider transition-colors ${
                           modal.pendingResult === r ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
                         }`}>
-                        {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : '💀 Dead'}
+                        {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : r === 'NIGGLING' ? '🩹 Niggling' : '💀 Dead'}
                       </button>
                     ))}
                   </div>
@@ -2050,12 +2599,12 @@ export default function GameOnClient({ matchData }: Props) {
                   </select>
                   {modal.pendingPlayerId && (
                     <div className="grid grid-cols-2 gap-2">
-                      {(['KO', 'BH', 'MNG', 'DEAD'] as CasualtyResult[]).map((r) => (
+                      {(['KO', 'BH', 'MNG', 'NIGGLING', 'DEAD'] as CasualtyResult[]).map((r) => (
                         <button key={r} onClick={() => setModal({ ...modal, pendingResult: r })}
                           className={`p-3 rounded-sm border text-sm font-heading font-bold uppercase tracking-wider transition-colors ${
                             modal.pendingResult === r ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
                           }`}>
-                          {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : '💀 Dead'}
+                          {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : r === 'NIGGLING' ? '🩹 Niggling' : '💀 Dead'}
                         </button>
                       ))}
                     </div>
@@ -2232,6 +2781,428 @@ export default function GameOnClient({ matchData }: Props) {
           </ModalOverlay>
         )}
 
+        {modal?.type === 'specialCard' && (
+          <ModalOverlay title="Play Special Card" onClose={() => setModal(null)}>
+            {modal.step === 0 && (
+              <>
+                <p className="text-bb-muted text-sm">Which turn is this card played on?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                    <button key={t} onClick={() => setModal({ ...modal, step: 1, eventTurn: t })}
+                      className="py-2 rounded-sm border border-bb-border text-sm font-heading font-bold text-white hover:border-bb-gold hover:bg-bb-gold/10 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {modal.step === 1 && (
+              <>
+                <p className="text-bb-muted text-sm">Which team? <span className="text-bb-gold font-heading">T{modal.eventTurn}</span></p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['home', 'away'] as const).map((side) => {
+                    const team      = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    const available = (side === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards).some((s) => !s.cardId)
+                    return (
+                      <button key={side} disabled={!available} onClick={() => setModal({ ...modal, step: 2, side })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors text-center disabled:opacity-30 disabled:cursor-not-allowed">
+                        <div className="font-heading font-bold text-white text-sm">{team.name}</div>
+                        <div className="text-xs text-bb-muted mt-1">{available ? 'Card available' : 'No undrawn card'}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
+              </>
+            )}
+            {modal.step === 2 && modal.side && (() => {
+              const slots = (modal.side === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards)
+                .filter((s) => !s.cardId)
+              return (
+                <>
+                  <p className="text-bb-muted text-sm">Which draw is being played?</p>
+                  <div className="space-y-2">
+                    {slots.map((s) => (
+                      <button key={s.id} onClick={() => setModal({ ...modal, step: 3, slotId: s.id })}
+                        className="w-full p-3 rounded-sm border border-bb-border text-sm font-heading text-left hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors">
+                        {s.deckName} <span className="text-bb-muted text-xs">({s.cost.toLocaleString()} gp)</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setModal({ ...modal, step: 1, side: null })} className={btnGhost}>← Back</button>
+                </>
+              )
+            })()}
+            {modal.step === 3 && modal.side && modal.slotId && (() => {
+              const slot = (modal.side === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards)
+                .find((s) => s.id === modal.slotId)
+              const deck = matchData.specialPlayDecks.find((d) => d.id === slot?.deckId)
+              const card = deck?.cards.find((c) => c.id === modal.cardId)
+              return (
+                <>
+                  <p className="text-bb-muted text-sm">Which card from the {deck?.name} deck was drawn?</p>
+                  <select
+                    value={modal.cardId ?? ''}
+                    onChange={(e) => setModal({ ...modal, cardId: e.target.value || null })}
+                    className="w-full bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold"
+                  >
+                    <option value="">Select card…</option>
+                    {deck?.cards.map((c) => (
+                      <option key={c.id} value={c.id}>{c.cardLabel}: {c.name}</option>
+                    ))}
+                  </select>
+                  {card && (
+                    <div className="text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2 space-y-1.5">
+                      <p><span className="text-bb-gold font-heading uppercase tracking-wider text-[10px]">Description</span><br />{card.description}</p>
+                      <p><span className="text-bb-gold font-heading uppercase tracking-wider text-[10px]">Timing</span><br />{card.timing}</p>
+                      <p><span className="text-bb-gold font-heading uppercase tracking-wider text-[10px]">Effect</span><br />{card.effect}</p>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-1">
+                    <button onClick={() => setModal({ ...modal, step: 2, slotId: null, cardId: null })} className={btnGhost}>← Back</button>
+                    <button onClick={commitSpecialPlayCard} disabled={!modal.cardId}
+                      className="px-4 py-2 bg-bb-gold text-bb-dark rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                      Confirm
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
+          </ModalOverlay>
+        )}
+
+        {modal?.type === 'kickoff' && (
+          <ModalOverlay title="Kick-Off" onClose={() => {}}>
+            {modal.step === 'confirmNeeded' && (
+              <>
+                <p className="text-bb-muted text-sm">Touchdown recorded. Are there still turns remaining in this half?</p>
+                <div className="flex gap-3">
+                  <button onClick={() => setModal({ ...modal, step: 'setup' })}
+                    className="flex-1 px-4 py-3 bg-bb-crimson text-white rounded-sm text-sm font-heading uppercase tracking-widest">
+                    Yes — Kick Off Again
+                  </button>
+                  <button onClick={() => setModal(null)}
+                    className="flex-1 px-4 py-3 border border-bb-border text-bb-muted rounded-sm text-sm font-heading uppercase tracking-widest">
+                    No — Half Over
+                  </button>
+                </div>
+              </>
+            )}
+
+            {modal.step === 'toss' && (
+              <>
+                <p className="text-bb-muted text-sm leading-relaxed">
+                  <span className="text-bb-gold font-heading uppercase tracking-wider text-[10px] block mb-1">CRP1 — Setting Up</span>
+                  Flip a coin or roll a D6 to see who chooses. The winner sets up first as the <b className="text-white">Kicking Team</b> (they kick the ball), or second as the <b className="text-white">Receiving Team</b>.
+                </p>
+                {modal.tossWinner === null ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    {(['home', 'away'] as const).map((side) => (
+                      <button key={side} onClick={() => setModal({ ...modal, tossWinner: side })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-gold hover:bg-bb-gold/5 transition-colors text-center">
+                        <div className="font-heading font-bold text-white text-sm">{side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name}</div>
+                        <div className="text-xs text-bb-muted mt-1">won the toss</div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm text-white">{modal.tossWinner === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name} won the toss — kick or receive?</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button onClick={() => setModal({ ...modal, step: 'setup', kickingTeam: modal.tossWinner })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-gold hover:bg-bb-gold/5 transition-colors text-center font-heading text-white text-sm">
+                        ⚽ Kick
+                      </button>
+                      <button onClick={() => setModal({ ...modal, step: 'setup', kickingTeam: modal.tossWinner === 'home' ? 'away' : 'home' })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-gold hover:bg-bb-gold/5 transition-colors text-center font-heading text-white text-sm">
+                        🤲 Receive
+                      </button>
+                    </div>
+                    <button onClick={() => setModal({ ...modal, tossWinner: null })} className={btnGhost}>← Back</button>
+                  </>
+                )}
+              </>
+            )}
+
+            {modal.step === 'setup' && (
+              <>
+                <p className="text-bb-muted text-sm leading-relaxed">
+                  <span className="text-bb-gold font-heading uppercase tracking-wider text-[10px] block mb-1">CRP1 — Setup</span>
+                  The <b className="text-white">Kicking Team</b> ({modal.kickingTeam ? (modal.kickingTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name) : '—'}) sets up first, then the <b className="text-white">Receiving Team</b> ({modal.kickingTeam ? (modal.kickingTeam === 'home' ? matchData.awayTeam.name : matchData.homeTeam.name) : '—'}). Each coach sets up up to 11 players between their end zone and the halfway line.
+                </p>
+                <button onClick={() => setModal({ ...modal, step: 'roll' })}
+                  className="w-full px-4 py-3 bg-bb-gold text-bb-dark rounded-sm text-sm font-heading uppercase tracking-widest">
+                  Teams Are Set Up →
+                </button>
+              </>
+            )}
+
+            {modal.step === 'roll' && modal.kickingTeam && (() => {
+              const kickingName   = modal.kickingTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+              const receivingName = modal.kickingTeam === 'home' ? matchData.awayTeam.name : matchData.homeTeam.name
+              return (
+                <>
+                  <p className="text-bb-muted text-sm leading-relaxed">
+                    <span className="text-bb-gold font-heading uppercase tracking-wider text-[10px] block mb-1">CRP1 — Kick-Off</span>
+                    {kickingName} places the ball anywhere in {receivingName}&rsquo;s half, then it scatters (D8 for direction, D6 for squares). Roll 2D6 on the Kick-Off Table.
+                  </p>
+                  <p className="text-bb-muted text-sm">Which turn is this?</p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                      <button key={t} onClick={() => setModal({ ...modal, eventTurn: t })}
+                        className={`py-2 rounded-sm border text-sm font-heading font-bold transition-colors ${
+                          modal.eventTurn === t ? 'bg-bb-gold border-bb-gold text-bb-dark' : 'border-bb-border text-white hover:border-bb-gold hover:bg-bb-gold/10'
+                        }`}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <select value={modal.die1} onChange={(e) => setModal({ ...modal, die1: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                      className="bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold">
+                      <option value="" disabled>D1</option>
+                      {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span className="text-bb-muted">+</span>
+                    <select value={modal.die2} onChange={(e) => setModal({ ...modal, die2: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                      className="bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold">
+                      <option value="" disabled>D2</option>
+                      {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <button disabled={!modal.eventTurn || modal.die1 === '' || modal.die2 === ''}
+                    onClick={() => setModal({ ...modal, step: 'resolve' })}
+                    className="w-full px-4 py-3 bg-bb-gold text-bb-dark rounded-sm text-sm font-heading uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed">
+                    Roll →
+                  </button>
+                </>
+              )
+            })()}
+
+            {modal.step === 'resolve' && modal.kickingTeam && modal.die1 !== '' && modal.die2 !== '' && (() => {
+              const dieRoll = modal.die1 as number + (modal.die2 as number)
+              const result = matchData.kickoffTable.find((r) => r.dieRoll === dieRoll)
+              const receivingTeam = modal.kickingTeam === 'home' ? 'away' : 'home'
+              const homePlayers = homePlaying
+              const awayPlayers = awayPlaying
+              const canConfirm = (() => {
+                if (dieRoll === 11) {
+                  const homeTotal = (modal.rockHomeDie || 0) + homeKickoffFame
+                  const awayTotal = (modal.rockAwayDie || 0) + awayKickoffFame
+                  if (modal.rockHomeDie === '' || modal.rockAwayDie === '') return false
+                  const tie = homeTotal === awayTotal
+                  if (!modal.rockVictimId || !modal.rockResult) return false
+                  if (tie && (!modal.rockVictimId2 || !modal.rockResult2)) return false
+                  return true
+                }
+                if (dieRoll === 7) return modal.weatherDie1 !== '' && modal.weatherDie2 !== ''
+                return true
+              })()
+              return (
+                <>
+                  <div className="bg-bb-darker border border-bb-border rounded-sm px-4 py-3">
+                    <p className="font-heading text-bb-gold font-bold text-sm">{result?.name ?? `Result ${dieRoll}`}</p>
+                    <p className="text-xs text-bb-muted mt-1 leading-relaxed">{result?.description}</p>
+                  </div>
+
+                  {dieRoll === 3 && (
+                    <div className="space-y-2">
+                      <p className="text-bb-muted text-sm">What turn is the receiving team on this half?</p>
+                      <div className="grid grid-cols-4 gap-2">
+                        <button onClick={() => setModal({ ...modal, riotTurn: 'none' })}
+                          className={`col-span-2 py-2 rounded-sm border text-xs font-heading uppercase ${modal.riotTurn === 'none' ? 'bg-bb-gold border-bb-gold text-bb-dark' : 'border-bb-border text-white'}`}>
+                          Hasn&rsquo;t had a turn
+                        </button>
+                        {[1,2,3,4,5,6,7].map((t) => (
+                          <button key={t} onClick={() => setModal({ ...modal, riotTurn: t })}
+                            className={`py-2 rounded-sm border text-sm font-heading font-bold ${modal.riotTurn === t ? 'bg-bb-gold border-bb-gold text-bb-dark' : 'border-bb-border text-white'}`}>
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                      {modal.riotTurn !== 'none' && modal.riotTurn !== 7 && modal.riotTurn !== '' && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-bb-muted text-xs">D6 roll:</span>
+                          <select value={modal.riotD6} onChange={(e) => setModal({ ...modal, riotD6: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                            className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1 text-xs text-white">
+                            <option value="" disabled>D6</option>
+                            {[1,2,3,4,5,6].map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {dieRoll === 5 && (
+                    <SelectPlayer
+                      players={receivingTeam === 'home' ? homePlayers : awayPlayers}
+                      value={modal.movedPlayerId ?? ''}
+                      onChange={(v) => setModal({ ...modal, movedPlayerId: v || null })}
+                      placeholder="Which player was repositioned? (optional)"
+                    />
+                  )}
+
+                  {(dieRoll === 6 || dieRoll === 8) && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <p className="text-xs text-bb-muted">{matchData.homeTeam.name} D3</p>
+                        <select value={modal.homeCompareDie} onChange={(e) => setModal({ ...modal, homeCompareDie: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                          className="w-full bg-bb-darker border border-bb-border rounded-sm px-2 py-1.5 text-sm text-white">
+                          <option value="" disabled>D3</option>
+                          {[1,2,3].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <p className="text-[10px] text-bb-muted/60">+ FAME {homeKickoffFame} + {dieRoll === 6 ? `Cheer ${matchData.homeCheerleaders}` : `Coach ${matchData.homeAssistantCoaches}`}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs text-bb-muted">{matchData.awayTeam.name} D3</p>
+                        <select value={modal.awayCompareDie} onChange={(e) => setModal({ ...modal, awayCompareDie: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                          className="w-full bg-bb-darker border border-bb-border rounded-sm px-2 py-1.5 text-sm text-white">
+                          <option value="" disabled>D3</option>
+                          {[1,2,3].map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <p className="text-[10px] text-bb-muted/60">+ FAME {awayKickoffFame} + {dieRoll === 6 ? `Cheer ${matchData.awayCheerleaders}` : `Coach ${matchData.awayAssistantCoaches}`}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {dieRoll === 7 && (
+                    <div className="flex items-center gap-3">
+                      <span className="text-bb-muted text-xs">Re-roll weather:</span>
+                      <select value={modal.weatherDie1} onChange={(e) => setModal({ ...modal, weatherDie1: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                        className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1 text-xs text-white">
+                        <option value="" disabled>D1</option>
+                        {[1,2,3,4,5,6].map((n) => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                      <span className="text-bb-muted">+</span>
+                      <select value={modal.weatherDie2} onChange={(e) => setModal({ ...modal, weatherDie2: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                        className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1 text-xs text-white">
+                        <option value="" disabled>D2</option>
+                        {[1,2,3,4,5,6].map((n) => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {dieRoll === 10 && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={modal.turnoverEndedEarly}
+                        onChange={(e) => setModal({ ...modal, turnoverEndedEarly: e.target.checked })}
+                        className="accent-bb-crimson w-4 h-4" />
+                      <span className="text-sm text-white">Bonus turn ended early (a player suffered a turnover)</span>
+                    </label>
+                  )}
+
+                  {dieRoll === 11 && (() => {
+                    const homeTotal = (modal.rockHomeDie || 0) + homeKickoffFame
+                    const awayTotal = (modal.rockAwayDie || 0) + awayKickoffFame
+                    const tie = modal.rockHomeDie !== '' && modal.rockAwayDie !== '' && homeTotal === awayTotal
+                    const thrower = !tie && modal.rockHomeDie !== '' && modal.rockAwayDie !== '' ? (homeTotal > awayTotal ? 'home' : 'away') : null
+                    return (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <p className="text-xs text-bb-muted">{matchData.homeTeam.name} D6 (+ FAME {homeKickoffFame})</p>
+                            <select value={modal.rockHomeDie} onChange={(e) => setModal({ ...modal, rockHomeDie: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                              className="w-full bg-bb-darker border border-bb-border rounded-sm px-2 py-1.5 text-sm text-white">
+                              <option value="" disabled>D6</option>
+                              {[1,2,3,4,5,6].map((n) => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs text-bb-muted">{matchData.awayTeam.name} D6 (+ FAME {awayKickoffFame})</p>
+                            <select value={modal.rockAwayDie} onChange={(e) => setModal({ ...modal, rockAwayDie: e.target.value ? parseInt(e.target.value, 10) : '' })}
+                              className="w-full bg-bb-darker border border-bb-border rounded-sm px-2 py-1.5 text-sm text-white">
+                              <option value="" disabled>D6</option>
+                              {[1,2,3,4,5,6].map((n) => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        {tie && (
+                          <p className="text-xs text-bb-gold">Tie — a rock is thrown at each team!</p>
+                        )}
+                        {(thrower === 'home' || tie) && (
+                          <div className="space-y-1.5 border-t border-bb-border/40 pt-2">
+                            <p className="text-xs text-bb-muted">{matchData.awayTeam.name} player hit:</p>
+                            <SelectPlayer players={awayPlayers} value={modal.rockVictimId ?? ''}
+                              onChange={(v) => setModal({ ...modal, rockVictimId: v || null })} placeholder="Select player…" />
+                            {modal.rockVictimId && (
+                              <div className="grid grid-cols-4 gap-1.5">
+                                {(['BH','MNG','NIGGLING','DEAD'] as CasualtyResult[]).map((r) => (
+                                  <button key={r} onClick={() => setModal({ ...modal, rockResult: r })}
+                                    className={`py-1.5 rounded-sm border text-[10px] font-heading uppercase ${modal.rockResult === r ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted'}`}>
+                                    {r === 'BH' ? 'Badly Hurt' : r === 'MNG' ? 'MNG' : r === 'NIGGLING' ? 'Niggling' : 'Dead'}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {(thrower === 'away' || tie) && (
+                          <div className="space-y-1.5 border-t border-bb-border/40 pt-2">
+                            <p className="text-xs text-bb-muted">{matchData.homeTeam.name} player hit:</p>
+                            <SelectPlayer players={homePlayers} value={modal.rockVictimId2 ?? ''}
+                              onChange={(v) => setModal({ ...modal, rockVictimId2: v || null })} placeholder="Select player…" />
+                            {modal.rockVictimId2 && (
+                              <div className="grid grid-cols-4 gap-1.5">
+                                {(['BH','MNG','NIGGLING','DEAD'] as CasualtyResult[]).map((r) => (
+                                  <button key={r} onClick={() => setModal({ ...modal, rockResult2: r })}
+                                    className={`py-1.5 rounded-sm border text-[10px] font-heading uppercase ${modal.rockResult2 === r ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted'}`}>
+                                    {r === 'BH' ? 'Badly Hurt' : r === 'MNG' ? 'MNG' : r === 'NIGGLING' ? 'Niggling' : 'Dead'}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+
+                  {dieRoll === 12 && (
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs text-bb-muted mb-1">{matchData.homeTeam.name} players Stunned:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {homePlayers.map((p) => {
+                            const checked = modal.stunnedHomeIds.includes(p.id)
+                            return (
+                              <button key={p.id} onClick={() => setModal({ ...modal, stunnedHomeIds: checked ? modal.stunnedHomeIds.filter((id) => id !== p.id) : [...modal.stunnedHomeIds, p.id] })}
+                                className={`text-[11px] px-2 py-1 rounded-sm border ${checked ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted'}`}>
+                                {playerLabel(p)}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs text-bb-muted mb-1">{matchData.awayTeam.name} players Stunned:</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {awayPlayers.map((p) => {
+                            const checked = modal.stunnedAwayIds.includes(p.id)
+                            return (
+                              <button key={p.id} onClick={() => setModal({ ...modal, stunnedAwayIds: checked ? modal.stunnedAwayIds.filter((id) => id !== p.id) : [...modal.stunnedAwayIds, p.id] })}
+                                className={`text-[11px] px-2 py-1 rounded-sm border ${checked ? 'bg-bb-crimson border-bb-crimson text-white' : 'border-bb-border text-bb-muted'}`}>
+                                {playerLabel(p)}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between pt-1">
+                    <button onClick={() => setModal({ ...modal, step: 'roll' })} className={btnGhost}>← Re-roll</button>
+                    <button onClick={commitKickoff} disabled={!canConfirm}
+                      className="px-4 py-2 bg-bb-gold text-bb-dark rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                      Confirm
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
+          </ModalOverlay>
+        )}
+
         {modal?.type === 'inducements' && (
           <ModalOverlay title="Purchased Inducements" onClose={() => setModal(null)}>
             {matchData.homeInducementsPurchased.length === 0 && matchData.awayInducementsPurchased.length === 0 ? (
@@ -2369,15 +3340,16 @@ export default function GameOnClient({ matchData }: Props) {
                     <select
                       value={effective}
                       onChange={(e) => {
-                        const v = e.target.value as 'BH' | 'MNG' | 'DEAD'
+                        const v = e.target.value as 'BH' | 'MNG' | 'NIGGLING' | 'DEAD'
                         setState((prev) => ({
                           ...prev,
-                          injuryOverrides: { ...prev.injuryOverrides, [player.id]: v as 'BH' | 'MNG' | 'DEAD' },
+                          injuryOverrides: { ...prev.injuryOverrides, [player.id]: v },
                         }))
                       }}
                       className="bg-bb-dark border border-bb-border rounded-sm px-3 py-1.5 text-sm text-white focus:outline-none focus:border-bb-gold">
                       <option value="BH">Badly Hurt (no lasting effect)</option>
                       <option value="MNG">Miss Next Game</option>
+                      <option value="NIGGLING">Niggling Injury</option>
                       <option value="DEAD">Dead</option>
                     </select>
                   </div>
@@ -2392,31 +3364,97 @@ export default function GameOnClient({ matchData }: Props) {
           <h2 className="font-heading text-base font-bold text-bb-gold mb-1 uppercase tracking-widest">
             💰 Match Winnings
           </h2>
-          <p className="text-xs text-bb-muted mb-4">Gold pieces to add to each team&apos;s treasury.</p>
-          <div className="grid grid-cols-2 gap-4">
-            {(['home', 'away'] as const).map((side) => {
-              const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
-              return (
-                <div key={side}>
-                  <label className="block text-xs text-bb-muted mb-1.5 font-heading uppercase tracking-wider">{team.name}</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={0}
-                      step={10000}
-                      value={state.winnings[side]}
-                      onChange={(e) => {
-                        const v = parseInt(e.target.value, 10) || 0
-                        setState((prev) => ({ ...prev, winnings: { ...prev.winnings, [side]: v } }))
-                      }}
-                      className="w-full bg-bb-darker border border-bb-border rounded-sm px-3 py-2 text-sm text-white focus:outline-none focus:border-bb-gold"
-                    />
-                    <span className="text-xs text-bb-muted shrink-0">gp</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+          <p className="text-xs text-bb-muted mb-4">CRP1: 1D6 + FAME, ×10,000gp, +10,000gp if won or drawn — the winner may re-roll once but must keep the new result.</p>
+          {(() => {
+            const homeSpent = matchData.homeTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
+                             + matchData.homeInducementsPurchased.reduce((s, p) => s + p.cost, 0)
+            const awaySpent = matchData.awayTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
+                             + matchData.awayInducementsPurchased.reduce((s, p) => s + p.cost, 0)
+            const { homePettyCashReturned, awayPettyCashReturned } = computePettyCashReturn({
+              homeTeamValue: matchData.homeBaseTeamValue,
+              awayTeamValue: matchData.awayBaseTeamValue,
+              homePettyCash: matchData.homePettyCash,
+              awayPettyCash: matchData.awayPettyCash,
+              homeSpent, awaySpent,
+            })
+
+            return (
+              <div className="grid grid-cols-2 gap-4">
+                {(['home', 'away'] as const).map((side) => {
+                  const team    = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                  const fame    = side === 'home' ? matchData.homeFame : matchData.awayFame
+                  const won     = side === 'home' ? score.home > score.away : score.away > score.home
+                  const isDraw  = score.home === score.away
+                  const die         = side === 'home' ? homeWinDie      : awayWinDie
+                  const setDie      = side === 'home' ? setHomeWinDie   : setAwayWinDie
+                  const rerolled    = side === 'home' ? homeWinRerolled : awayWinRerolled
+                  const setRerolled = side === 'home' ? setHomeWinRerolled : setAwayWinRerolled
+                  const bonus = won || isDraw ? 10000 : 0
+                  const dieNum = typeof die === 'number' ? die : 0
+                  const computed = (fame !== null && die !== '') ? (dieNum + fame) * 10000 + bonus : null
+
+                  const teamValue         = side === 'home' ? matchData.homeTeamValue    : matchData.awayTeamValue
+                  const treasury          = side === 'home' ? matchData.homeTeamTreasury : matchData.awayTeamTreasury
+                  const pettyCashReturned = side === 'home' ? homePettyCashReturned       : awayPettyCashReturned
+                  const expense = spirallingExpenseFor(teamValue, matchData.spirallingExpenseTiers)
+                  const available = computed !== null ? treasury + computed + pettyCashReturned : null
+                  const expenseClamped = available !== null ? Math.min(expense, Math.max(0, available)) : null
+
+                  return (
+                    <div key={side}>
+                      <label className="block text-xs text-bb-muted mb-1.5 font-heading uppercase tracking-wider">{team.name}</label>
+                      {fame === null ? (
+                        <p className="text-xs text-bb-muted/50 italic">Fans &amp; FAME not recorded for this match — cannot compute winnings.</p>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <select value={die} onChange={(e) => setDie(e.target.value ? parseInt(e.target.value, 10) : '')}
+                              className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1 text-xs text-white focus:outline-none focus:border-bb-gold">
+                              <option value="" disabled>D6</option>
+                              {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                            <span className="text-[11px] text-bb-muted">+ FAME {fame}</span>
+                            {won && die !== '' && !rerolled && (
+                              <button onClick={() => { setDie(''); setRerolled(true) }}
+                                className="text-[10px] px-1.5 py-0.5 rounded-sm border border-bb-gold/40 text-bb-gold hover:bg-bb-gold/10">
+                                Re-roll
+                              </button>
+                            )}
+                          </div>
+                          {computed === null ? (
+                            <p className="text-xs text-bb-muted/50 italic">Enter the D6 roll to compute winnings.</p>
+                          ) : (
+                            <div className="bg-bb-darker border border-bb-border rounded-sm p-3 space-y-1">
+                              <p className="text-xs text-bb-muted">
+                                {dieNum} (D6) + {fame} (FAME) = {dieNum + fame} × 10,000gp = {((dieNum + fame) * 10000).toLocaleString()}gp
+                              </p>
+                              {bonus > 0 && (
+                                <p className="text-xs text-bb-muted">+ {bonus.toLocaleString()}gp ({won ? 'Win' : 'Draw'} bonus)</p>
+                              )}
+                              <p className="text-lg font-heading font-black text-bb-gold">
+                                Total: {computed.toLocaleString()}gp
+                              </p>
+                              {expense > 0 && expenseClamped !== null && (
+                                <div className="pt-2 mt-2 border-t border-bb-border/40 space-y-1">
+                                  <p className="text-xs text-bb-muted">
+                                    Spiralling Expenses: {expense.toLocaleString()}gp
+                                    {expenseClamped < expense && ` (capped at ${expenseClamped.toLocaleString()}gp — treasury floor)`}
+                                  </p>
+                                  <p className="text-xs text-bb-muted">
+                                    Treasury after this match: {treasury.toLocaleString()} + {computed.toLocaleString()} + {pettyCashReturned.toLocaleString()} − {expenseClamped.toLocaleString()} = {(treasury + computed + pettyCashReturned - expenseClamped).toLocaleString()}gp
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </section>
 
         {/* Player Stats Preview */}
@@ -2466,13 +3504,16 @@ export default function GameOnClient({ matchData }: Props) {
         )}
 
         {/* Complete button */}
-        <div className="flex justify-center pb-8">
+        <div className="flex flex-col items-center gap-2 pb-8">
           <button
             onClick={handleComplete}
-            disabled={isPending}
+            disabled={isPending || (matchData.homeFame !== null && homeWinDie === '') || (matchData.awayFame !== null && awayWinDie === '')}
             className="px-8 py-4 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-50 shadow-lg shadow-bb-crimson/20">
             {isPending ? 'Saving…' : '⚔ Complete Match & Save Everything'}
           </button>
+          {((matchData.homeFame !== null && homeWinDie === '') || (matchData.awayFame !== null && awayWinDie === '')) && (
+            <p className="text-xs text-bb-muted">Enter both teams&rsquo; winnings D6 roll first</p>
+          )}
         </div>
       </div>
 

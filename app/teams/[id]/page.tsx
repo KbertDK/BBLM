@@ -1,15 +1,19 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { getTeamById, getPendingJourneymen } from '@/lib/queries/teams'
+import { getTeamById, getPendingJourneymen, getTeamCompletedMatches } from '@/lib/queries/teams'
 import { getSession } from '@/lib/auth'
 import { updatePlayer, updateTeamInfo, deleteTeam, deactivateTeam, activateTeam, assignTeam,
          buyPlayer, sackPlayer, reinstatePlayer, appendTeamNewsNote, createTeamNewsPost,
-         recordSkillRoll, pickSkill, pickStatIncrease, signJourneyman, fireJourneyman } from './actions'
-import { getRaceLogo } from '@/lib/race-logo'
+         recordSkillRoll, pickSkill, pickStatIncrease, signJourneyman, fireJourneyman,
+         buyReroll, sackReroll, buyAssistantCoach, sackAssistantCoach, buyCheerleader, sackCheerleader,
+         buyApothecary, sackApothecary, buyFanFactor, sackFanFactor, hasActiveMatch } from './actions'
 import prisma from '@/lib/prisma'
 import { getTeamNews } from '@/lib/queries/news'
 import { skillRollsAvailable, improvementOptions, canIncreaseStat } from '@/lib/ssp'
+import PlayerHistoryModal from './PlayerHistoryModal'
+import LogoUpload from './LogoUpload'
+import { getTeamLogo } from '@/lib/team-logo'
 
 export const dynamic = 'force-dynamic'
 
@@ -90,8 +94,9 @@ export default async function TeamPage({ params, searchParams }: Props) {
   const [team, session] = await Promise.all([getTeamById(params.id), getSession()])
   if (!team) notFound()
 
-  const isOwner  = session?.coachId === team.coachId
-  const raceLogo = getRaceLogo(team.race.name)
+  const isOwner = session?.coachId === team.coachId
+  const locked  = isOwner && await hasActiveMatch(team.id)
+  const teamLogo = getTeamLogo(team.logoUrl, team.race.name)
   const maxSlots = team.league.ruleSet?.numberOfPlayers ?? 16
   const living     = team.players.filter((p) => p.status === 'ACTIVE' || p.status === 'MNG')
   const sacked     = team.players.filter((p) => p.status === 'SACKED')
@@ -135,13 +140,17 @@ export default async function TeamPage({ params, searchParams }: Props) {
   let teamNews: Awaited<ReturnType<typeof getTeamNews>> = []
   let allSkills: { id: string; name: string; category: string }[] = []
   let pendingJourneymen: Awaited<ReturnType<typeof getPendingJourneymen>> = []
+  let completedMatches: Awaited<ReturnType<typeof getTeamCompletedMatches>> = []
 
   if (tab === 'roster') {
-    playerTypes = await prisma.playerType.findMany({
-      where:   { raceId: team.raceId },
-      orderBy: { cost: 'asc' },
-      select:  { id: true, name: true, cost: true, maxCount: true },
-    })
+    ;[playerTypes, completedMatches] = await Promise.all([
+      prisma.playerType.findMany({
+        where:   { raceId: team.raceId },
+        orderBy: { cost: 'asc' },
+        select:  { id: true, name: true, cost: true, maxCount: true },
+      }),
+      getTeamCompletedMatches(team.id),
+    ])
     if (isOwner) {
       ;[allSkills, pendingJourneymen] = await Promise.all([
         prisma.skill.findMany({
@@ -183,7 +192,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
     })
   }
 
-  if (tab === 'standing') {
+  if (tab === 'standing' || tab === 'achievements') {
     const [teamsResult, leagueResult] = await Promise.all([
       prisma.team.findMany({
         where:   team.divisionId ? { divisionId: team.divisionId } : { leagueId: team.leagueId },
@@ -298,19 +307,18 @@ export default async function TeamPage({ params, searchParams }: Props) {
             </div>
           </div>
 
-          {raceLogo && (
-            <img
-              src={raceLogo}
-              alt={team.race.name}
-              className="w-44 h-44 object-contain shrink-0 hidden sm:block opacity-90"
-            />
-          )}
+          <LogoUpload
+            teamId={team.id}
+            currentLogo={teamLogo}
+            raceName={team.race.name}
+            isOwner={isOwner}
+          />
         </div>
 
         {/* ── Tab navigation ── */}
         <nav className="flex gap-1.5 mb-8 border-b border-bb-border pb-0">
-          {(['roster', 'schedule', 'standing', 'news'] as const).map((t) => {
-            const labels = { roster: 'Roster', schedule: 'Schedule', standing: 'Standing', news: 'Team News' }
+          {(['roster', 'schedule', 'standing', 'achievements', 'news'] as const).map((t) => {
+            const labels = { roster: 'Roster', schedule: 'Schedule', standing: 'Standing', achievements: 'Honours', news: 'Team News' }
             return (
               <Link
                 key={t}
@@ -347,7 +355,13 @@ export default async function TeamPage({ params, searchParams }: Props) {
             <section className="mb-10">
               <SectionRule title="Team Info" right={`TV ${teamValue.toLocaleString()}`} />
 
-              {isOwner ? (
+              {locked && (
+                <div className="mb-3 px-4 py-3 bg-amber-900/20 border border-amber-700/40 rounded-sm text-amber-300 text-sm">
+                  Roster locked — this team has a match in progress. Changes resume once it&rsquo;s completed.
+                </div>
+              )}
+
+              {isOwner && !locked ? (
                 <form action={updateTeamInfo} className="bg-bb-dark border border-bb-border rounded-sm p-4 space-y-4">
                   <input type="hidden" name="teamId" value={team.id} />
 
@@ -363,40 +377,115 @@ export default async function TeamPage({ params, searchParams }: Props) {
                         className="font-heading font-black text-white text-xl tabular-nums bg-transparent outline-none w-full focus:text-bb-gold transition-colors" />
                     </div>
 
-                    <div className="bg-bb-darker rounded-sm p-3 space-y-1">
-                      <label className="text-bb-muted text-xs uppercase tracking-widest block">Re-Rolls (max 8)</label>
-                      <input name="rerolls" type="number" min={0} max={8} defaultValue={team.rerolls}
-                        className="font-heading font-black text-white text-xl tabular-nums bg-transparent outline-none w-full focus:text-bb-gold transition-colors" />
+                    <div className="bg-bb-darker rounded-sm p-3 space-y-2">
+                      <div className="text-bb-muted text-xs uppercase tracking-widest">Re-Rolls</div>
+                      <div className="font-heading font-black text-white text-xl tabular-nums">
+                        {team.rerolls} <span className="text-bb-muted/50 text-sm font-normal">/ 8</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="submit" formAction={buyReroll}
+                          disabled={team.treasury < (totalGames > 0 ? team.race.rerollPrice * 2 : team.race.rerollPrice) || team.rerolls >= 8}
+                          title={totalGames > 0
+                            ? `Costs ${(team.race.rerollPrice * 2).toLocaleString()} gp — no refund on sack`
+                            : `Costs ${team.race.rerollPrice.toLocaleString()} gp — full refund on sack before your first match`}
+                          className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-gold/40 text-bb-gold hover:bg-bb-gold/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                          + Buy ({(totalGames > 0 ? team.race.rerollPrice * 2 : team.race.rerollPrice).toLocaleString()})
+                        </button>
+                        <button type="submit" formAction={sackReroll}
+                          disabled={team.rerolls <= 0}
+                          title={totalGames > 0 ? 'No refund' : 'Full refund'}
+                          className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-border text-bb-muted hover:text-bb-crimson hover:border-bb-crimson disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                          − Sack
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="bg-bb-darker rounded-sm p-3 space-y-1">
-                      <label className="text-bb-muted text-xs uppercase tracking-widest block">Asst. Coaches</label>
-                      <input name="assistantCoaches" type="number" min={0} defaultValue={team.assistantCoaches}
-                        className="font-heading font-black text-white text-xl tabular-nums bg-transparent outline-none w-full focus:text-bb-gold transition-colors" />
+                    <div className="bg-bb-darker rounded-sm p-3 space-y-2">
+                      <div className="text-bb-muted text-xs uppercase tracking-widest">Asst. Coaches</div>
+                      <div className="font-heading font-black text-white text-xl tabular-nums">{team.assistantCoaches}</div>
+                      <div className="flex gap-2">
+                        <button type="submit" formAction={buyAssistantCoach}
+                          disabled={team.treasury < 10000}
+                          title={totalGames > 0 ? 'Costs 10,000 gp — no refund on sack' : 'Costs 10,000 gp — full refund on sack before your first match'}
+                          className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-gold/40 text-bb-gold hover:bg-bb-gold/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                          + Buy (10,000)
+                        </button>
+                        <button type="submit" formAction={sackAssistantCoach}
+                          disabled={team.assistantCoaches <= 0}
+                          title={totalGames > 0 ? 'No refund' : 'Full refund'}
+                          className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-border text-bb-muted hover:text-bb-crimson hover:border-bb-crimson disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                          − Sack
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="bg-bb-darker rounded-sm p-3 space-y-1">
-                      <label className="text-bb-muted text-xs uppercase tracking-widest block">Cheerleaders</label>
-                      <input name="cheerleaders" type="number" min={0} defaultValue={team.cheerleaders}
-                        className="font-heading font-black text-white text-xl tabular-nums bg-transparent outline-none w-full focus:text-bb-gold transition-colors" />
+                    <div className="bg-bb-darker rounded-sm p-3 space-y-2">
+                      <div className="text-bb-muted text-xs uppercase tracking-widest">Cheerleaders</div>
+                      <div className="font-heading font-black text-white text-xl tabular-nums">{team.cheerleaders}</div>
+                      <div className="flex gap-2">
+                        <button type="submit" formAction={buyCheerleader}
+                          disabled={team.treasury < 10000}
+                          title={totalGames > 0 ? 'Costs 10,000 gp — no refund on sack' : 'Costs 10,000 gp — full refund on sack before your first match'}
+                          className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-gold/40 text-bb-gold hover:bg-bb-gold/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                          + Buy (10,000)
+                        </button>
+                        <button type="submit" formAction={sackCheerleader}
+                          disabled={team.cheerleaders <= 0}
+                          title={totalGames > 0 ? 'No refund' : 'Full refund'}
+                          className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-border text-bb-muted hover:text-bb-crimson hover:border-bb-crimson disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                          − Sack
+                        </button>
+                      </div>
                     </div>
 
                     <div className="bg-bb-darker rounded-sm p-3 space-y-1">
                       <label className="text-bb-muted text-xs uppercase tracking-widest block">Fan Factor</label>
-                      <input name="fanFactor" type="number" min={0} defaultValue={team.fanFactor}
-                        className="font-heading font-black text-white text-xl tabular-nums bg-transparent outline-none w-full focus:text-bb-gold transition-colors" />
+                      {totalGames > 0 ? (
+                        <>
+                          <div className="font-heading font-black text-white text-xl tabular-nums">{team.fanFactor}</div>
+                          <p className="text-[10px] text-bb-muted/50 italic">Locked after first match — adjust via the Fans &amp; FAME roll each match.</p>
+                        </>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="font-heading font-black text-white text-xl tabular-nums">{team.fanFactor} <span className="text-bb-muted/50 text-sm font-normal">/ 9</span></div>
+                          <div className="flex gap-2">
+                            <button type="submit" formAction={buyFanFactor}
+                              disabled={team.treasury < 10000 || team.fanFactor >= 9}
+                              title="Costs 10,000 gp — full refund on sack before your first match"
+                              className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-gold/40 text-bb-gold hover:bg-bb-gold/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                              + Buy (10,000)
+                            </button>
+                            <button type="submit" formAction={sackFanFactor}
+                              disabled={team.fanFactor <= 0}
+                              title="Full refund"
+                              className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-border text-bb-muted hover:text-bb-crimson hover:border-bb-crimson disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                              − Sack
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {team.race.hasApothecary ? (
                       <div className="bg-bb-darker rounded-sm p-3 space-y-2">
                         <div className="text-bb-muted text-xs uppercase tracking-widest">Apothecary</div>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="hidden" name="apothecary" value="false" />
-                          <input type="checkbox" name="apothecary" value="true" defaultChecked={team.apothecary} className="accent-bb-gold w-4 h-4" />
-                          <span className={`font-heading font-black text-xl ${team.apothecary ? 'text-green-400' : 'text-bb-muted/50'}`}>
-                            {team.apothecary ? 'Yes' : 'No'}
-                          </span>
-                        </label>
+                        <div className={`font-heading font-black text-xl ${team.apothecary ? 'text-green-400' : 'text-bb-muted/50'}`}>
+                          {team.apothecary ? 'Yes' : 'No'}
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="submit" formAction={buyApothecary}
+                            disabled={team.apothecary || team.treasury < 50000}
+                            title={totalGames > 0 ? 'Costs 50,000 gp — no refund on sack' : 'Costs 50,000 gp — full refund on sack before your first match'}
+                            className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-gold/40 text-bb-gold hover:bg-bb-gold/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                            + Buy (50,000)
+                          </button>
+                          <button type="submit" formAction={sackApothecary}
+                            disabled={!team.apothecary}
+                            title={totalGames > 0 ? 'No refund' : 'Full refund'}
+                            className="px-2 py-1 text-xs font-heading uppercase tracking-wider rounded-sm border border-bb-border text-bb-muted hover:text-bb-crimson hover:border-bb-crimson disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                            − Sack
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <div className="bg-bb-darker rounded-sm p-3 space-y-1 opacity-40">
@@ -474,16 +563,16 @@ export default async function TeamPage({ params, searchParams }: Props) {
                         {j.injuryStatus !== 'DEAD' && (
                           <form action={signJourneyman}>
                             <input type="hidden" name="journeymanId" value={j.id} />
-                            <button type="submit"
-                              className="px-3 py-1.5 rounded-sm border border-bb-gold/50 text-bb-gold text-xs font-heading uppercase tracking-wider hover:bg-bb-gold hover:text-bb-dark transition-colors">
+                            <button type="submit" disabled={locked} title={locked ? 'Roster locked — match in progress' : undefined}
+                              className="px-3 py-1.5 rounded-sm border border-bb-gold/50 text-bb-gold text-xs font-heading uppercase tracking-wider hover:bg-bb-gold hover:text-bb-dark transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                               Sign ({j.playerType.cost.toLocaleString()} gp)
                             </button>
                           </form>
                         )}
                         <form action={fireJourneyman}>
                           <input type="hidden" name="journeymanId" value={j.id} />
-                          <button type="submit"
-                            className="px-3 py-1.5 rounded-sm border border-bb-border text-bb-muted text-xs font-heading uppercase tracking-wider hover:border-bb-crimson hover:text-bb-crimson transition-colors">
+                          <button type="submit" disabled={locked} title={locked ? 'Roster locked — match in progress' : undefined}
+                            className="px-3 py-1.5 rounded-sm border border-bb-border text-bb-muted text-xs font-heading uppercase tracking-wider hover:border-bb-crimson hover:text-bb-crimson transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                             Fire
                           </button>
                         </form>
@@ -519,6 +608,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                       <th className="px-3 py-3 text-left w-24" title="Niggling Injuries">NIG</th>
                       <th className="px-2 py-3 text-center w-20" title="Player value in gold pieces">Value</th>
                       <th className="px-3 py-3 text-center w-24">Status</th>
+                      <th className="px-2 py-3 text-center w-16" title="Match history">Hist</th>
                       {isOwner && <th className="px-2 py-3 w-28" />}
                     </tr>
                   </thead>
@@ -641,20 +731,6 @@ export default async function TeamPage({ params, searchParams }: Props) {
                                   </details>
                                 )
                               })}
-                              {player.matchStats.length > 0 && (
-                                <details className="text-xs">
-                                  <summary className="cursor-pointer text-bb-muted hover:text-white font-heading uppercase tracking-wider text-[10px]">
-                                    📋 Match History ({player.matchStats.length})
-                                  </summary>
-                                  <div className="mt-1 space-y-0.5">
-                                    {player.matchStats.map((m) => (
-                                      <div key={m.id} className="text-[10px] text-bb-muted">
-                                        R{m.match.round} {m.match.homeTeam.name} v {m.match.awayTeam.name}: TD {m.touchdowns} · CP {m.completePasses} · Int {m.interceptions} · Cas {m.casualties} · MVP {m.mvp} · SSP {m.ssp}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </details>
-                              )}
                             </div>
                           )}
                         </td>
@@ -665,7 +741,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                         <td className="px-2 py-3.5 text-center text-sm text-bb-muted tabular-nums">{player.mvp}</td>
                         <td className="px-2 py-3.5 text-center text-sm text-bb-muted tabular-nums">{player.ssp}</td>
                         <td className="px-3 py-3.5 text-xs text-bb-crimson-bright">
-                          {player.niggling || <span className="text-bb-muted/30">—</span>}
+                          {player.nigglingInjuries > 0 ? player.nigglingInjuries : <span className="text-bb-muted/30">—</span>}
                         </td>
                         <td className="px-2 py-3.5 text-center text-sm text-bb-gold tabular-nums font-mono">
                           {(player.value > 0 ? player.value : player.playerType.cost).toLocaleString()}
@@ -674,6 +750,20 @@ export default async function TeamPage({ params, searchParams }: Props) {
                           <span className={`inline-block text-xs px-2 py-0.5 rounded-sm border ${PLAYER_STATUS_CLS[player.status]}`}>
                             {PLAYER_STATUS_LABEL[player.status]}
                           </span>
+                        </td>
+                        <td className="px-2 py-3.5 text-center">
+                          {completedMatches.length > 0 ? (
+                            <PlayerHistoryModal
+                              playerName={player.name ?? player.playerType.name}
+                              playerNumber={player.number}
+                              playerPosition={player.playerType.name}
+                              teamId={team.id}
+                              teamMatches={completedMatches}
+                              matchStats={player.matchStats}
+                            />
+                          ) : (
+                            <span className="text-bb-muted/20 text-xs">—</span>
+                          )}
                         </td>
                         {isOwner && (
                           <td className="px-2 py-2 text-center">
@@ -688,8 +778,9 @@ export default async function TeamPage({ params, searchParams }: Props) {
                               {/* Sack */}
                               <form action={sackPlayer}>
                                 <input type="hidden" name="playerId" value={player.id} />
-                                <button type="submit" title="Sack player"
-                                  className="inline-flex items-center justify-center w-7 h-7 rounded-sm border border-bb-border/60 text-bb-muted/60 hover:border-amber-600 hover:text-amber-400 transition-colors">
+                                <button type="submit" disabled={locked}
+                                  title={locked ? 'Roster locked — match in progress' : totalGames > 0 ? 'Sack player (no refund)' : 'Sack player (full refund)'}
+                                  className="inline-flex items-center justify-center w-7 h-7 rounded-sm border border-bb-border/60 text-bb-muted/60 hover:border-amber-600 hover:text-amber-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                                   </svg>
@@ -707,8 +798,9 @@ export default async function TeamPage({ params, searchParams }: Props) {
                         <td className="px-3 py-3 text-xs text-bb-muted/40 italic">Empty slot</td>
                         <td className="px-3 py-3 text-bb-muted/30 text-xs">—</td>
                         <td colSpan={13} />
-                        <td />
-                        {isOwner ? (
+                        <td />{/* Status */}
+                        <td />{/* Hist */}
+                        {isOwner && !locked ? (
                           <td className="px-2 py-2 text-center opacity-100">
                             <a href="#recruit" title="Recruit player"
                               className="inline-flex items-center justify-center w-7 h-7 rounded-sm border border-bb-gold/30 text-bb-gold/50 hover:border-bb-gold hover:text-bb-gold transition-colors">
@@ -728,7 +820,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
             </section>
 
             {/* Recruit Player (owner only, empty slots available) */}
-            {isOwner && emptyCount > 0 && (
+            {isOwner && !locked && emptyCount > 0 && (
               <section className="mb-10" id="recruit">
                 <SectionRule
                   title="Recruit Player"
@@ -827,8 +919,8 @@ export default async function TeamPage({ params, searchParams }: Props) {
                               {canReinstate ? (
                                 <form action={reinstatePlayer}>
                                   <input type="hidden" name="playerId" value={player.id} />
-                                  <button type="submit"
-                                    className="text-xs font-medium uppercase tracking-widest px-3 py-1 rounded-sm border border-amber-700/50 text-amber-400 hover:bg-amber-900/20 transition-colors">
+                                  <button type="submit" disabled={locked} title={locked ? 'Roster locked — match in progress' : undefined}
+                                    className="text-xs font-medium uppercase tracking-widest px-3 py-1 rounded-sm border border-amber-700/50 text-amber-400 hover:bg-amber-900/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
                                     Reinstate
                                   </button>
                                 </form>
@@ -905,7 +997,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                           <td className="px-2 py-3.5 text-center text-sm text-bb-muted/60 tabular-nums">{player.casualties}</td>
                           <td className="px-2 py-3.5 text-center text-sm text-bb-muted/60 tabular-nums">{player.mvp}</td>
                           <td className="px-2 py-3.5 text-center text-sm text-bb-muted/60 tabular-nums">{player.ssp}</td>
-                          <td className="px-3 py-3.5 text-xs text-bb-muted/60">{player.niggling || '—'}</td>
+                          <td className="px-3 py-3.5 text-xs text-bb-muted/60">{player.nigglingInjuries > 0 ? player.nigglingInjuries : '—'}</td>
                           <td className="px-2 py-3.5 text-center text-sm text-bb-muted/60 tabular-nums font-mono">
                             {(player.value > 0 ? player.value : player.playerType.cost).toLocaleString()}
                           </td>
@@ -1225,6 +1317,226 @@ export default async function TeamPage({ params, searchParams }: Props) {
             )}
           </section>
         )}
+
+        {/* ══ TAB: HONOURS ════════════════════════════════════════════════════ */}
+        {tab === 'achievements' && (() => {
+          // Top players from living roster (cumulative career stats on this team)
+          const byTd  = [...living].sort((a, b) => b.touchdowns    - a.touchdowns)
+          const byCp  = [...living].sort((a, b) => b.completePasses - a.completePasses)
+          const byCas = [...living].sort((a, b) => b.casualties     - a.casualties)
+          const topScorer   = byTd[0]
+          const topThrower  = byCp[0]
+          const topCasualty = byCas[0]
+
+          function RankBadge({ rank }: { rank: number }) {
+            if (rank === 1) return (
+              <svg viewBox="0 0 24 24" className="w-10 h-10" fill="none">
+                <path d="M12 2L14.5 8.5H21L15.5 12.5L17.5 19L12 15.5L6.5 19L8.5 12.5L3 8.5H9.5L12 2Z" fill="#FFD700" stroke="#B8860B" strokeWidth="0.5"/>
+                <circle cx="12" cy="11" r="3" fill="#B8860B" opacity="0.6"/>
+                <path d="M10.5 10.5C10.5 10.5 11 9 12 9C13 9 13.5 10.5 13.5 10.5" stroke="#FFD700" strokeWidth="0.8" strokeLinecap="round"/>
+                <circle cx="11" cy="11.5" r="0.7" fill="#FFD700"/>
+                <circle cx="13" cy="11.5" r="0.7" fill="#FFD700"/>
+                <path d="M10.5 13C10.5 13 11.2 14 12 14C12.8 14 13.5 13 13.5 13" stroke="#FFD700" strokeWidth="0.8" strokeLinecap="round"/>
+              </svg>
+            )
+            if (rank === 2) return (
+              <svg viewBox="0 0 24 24" className="w-9 h-9" fill="none">
+                <path d="M4 8h3V5h10v3h3v5c0 2-1.5 3.5-3 4l-1 3H8l-1-3C5.5 16.5 4 15 4 13V8Z" fill="#C0C0C0" stroke="#888" strokeWidth="0.5"/>
+                <path d="M4 8h3v5H4V8ZM17 8h3v5h-3V8Z" fill="#A0A0A0"/>
+                <rect x="8" y="20" width="8" height="2" rx="0.5" fill="#888"/>
+              </svg>
+            )
+            if (rank === 3) return (
+              <svg viewBox="0 0 24 24" className="w-9 h-9" fill="none">
+                <path d="M4 8h3V5h10v3h3v5c0 2-1.5 3.5-3 4l-1 3H8l-1-3C5.5 16.5 4 15 4 13V8Z" fill="#CD7F32" stroke="#8B4513" strokeWidth="0.5"/>
+                <path d="M4 8h3v5H4V8ZM17 8h3v5h-3V8Z" fill="#A0632A"/>
+                <rect x="8" y="20" width="8" height="2" rx="0.5" fill="#8B4513"/>
+              </svg>
+            )
+            return (
+              <div className="w-9 h-9 flex items-center justify-center font-heading font-black text-bb-muted text-2xl">
+                {rank}
+              </div>
+            )
+          }
+
+          function playerLabel(p: typeof living[0] | undefined) {
+            if (!p) return '—'
+            return p.name?.trim() || p.playerType.name
+          }
+
+          const rankLabel = myRank === 1 ? '1st' : myRank === 2 ? '2nd' : myRank === 3 ? '3rd' : `${myRank}th`
+          const rankColor = myRank === 1 ? 'text-bb-gold' : myRank === 2 ? 'text-slate-300' : myRank === 3 ? 'text-amber-600' : 'text-white'
+          const totalMatches = team.wins + team.draws + team.losses
+
+          return (
+            <div className="space-y-10">
+
+              {/* ── League Standing ───────────────────────────── */}
+              <section>
+                <SectionRule title="League Standing" right={team.division?.name ?? team.league.name} />
+
+                {sortedStanding.length === 0 ? (
+                  <p className="text-bb-muted text-sm italic">No league data available.</p>
+                ) : (
+                  <div className="bg-bb-dark border border-bb-border rounded-sm overflow-hidden">
+                    {/* This team's rank highlight */}
+                    <div className={`flex items-center gap-5 px-6 py-5 border-b ${myRank <= 3 ? 'border-bb-gold/30 bg-bb-gold/5' : 'border-bb-border'}`}>
+                      <RankBadge rank={myRank} />
+                      <div className="flex-1 min-w-0">
+                        <div className={`font-heading font-black text-2xl tracking-widest uppercase ${rankColor}`}>
+                          {rankLabel} Place
+                        </div>
+                        <div className="text-bb-muted text-sm mt-0.5">
+                          {team.wins}W · {team.draws}D · {team.losses}L
+                          {totalMatches > 0 && (
+                            <span className="ml-2 text-bb-muted/50">· {totalMatches} {totalMatches === 1 ? 'match' : 'matches'} played</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className={`font-heading font-black text-3xl tabular-nums ${rankColor}`}>
+                          {team.wins * pointsWin + team.draws * pointsDraw + team.losses * pointsLoss}
+                        </div>
+                        <div className="text-bb-muted text-xs uppercase tracking-widest">pts</div>
+                      </div>
+                    </div>
+
+                    {/* Mini standings table */}
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-bb-border/50">
+                          <th className="px-4 py-2 text-left text-bb-muted/60 font-medium uppercase tracking-widest w-8">#</th>
+                          <th className="px-4 py-2 text-left text-bb-muted/60 font-medium uppercase tracking-widest">Team</th>
+                          <th className="px-3 py-2 text-center text-bb-muted/60 font-medium uppercase tracking-widest w-8">W</th>
+                          <th className="px-3 py-2 text-center text-bb-muted/60 font-medium uppercase tracking-widest w-8">D</th>
+                          <th className="px-3 py-2 text-center text-bb-muted/60 font-medium uppercase tracking-widest w-8">L</th>
+                          <th className="px-3 py-2 text-right text-bb-muted/60 font-medium uppercase tracking-widest w-12">Pts</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedStanding.map((t, i) => {
+                          const rank = i + 1
+                          const pts  = t.wins * pointsWin + t.draws * pointsDraw + t.losses * pointsLoss
+                          const isMe = t.id === team.id
+                          return (
+                            <tr key={t.id}
+                              className={`border-b border-bb-border/30 last:border-0 transition-colors ${
+                                isMe ? 'bg-bb-gold/5 text-bb-gold' : 'text-bb-muted hover:text-white'
+                              }`}
+                            >
+                              <td className="px-4 py-2.5 font-heading font-bold">
+                                {rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank}
+                              </td>
+                              <td className="px-4 py-2.5 font-medium">{t.name}</td>
+                              <td className="px-3 py-2.5 text-center tabular-nums">{t.wins}</td>
+                              <td className="px-3 py-2.5 text-center tabular-nums">{t.draws}</td>
+                              <td className="px-3 py-2.5 text-center tabular-nums">{t.losses}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums font-heading font-bold">{pts}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {/* ── Player Honours ───────────────────────────────── */}
+              <section>
+                <SectionRule title="Player Honours" />
+                {living.length === 0 ? (
+                  <p className="text-bb-muted text-sm italic">No players on the roster yet.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+                    {/* Top Scorer */}
+                    <div className="bg-bb-dark border border-bb-border rounded-sm p-5 space-y-3">
+                      <div className="flex items-center gap-2">
+                        {/* Football / touchdown icon */}
+                        <svg viewBox="0 0 24 24" className="w-6 h-6 text-bb-gold" fill="currentColor">
+                          <ellipse cx="12" cy="12" rx="9" ry="6" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+                          <line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="1"/>
+                          <line x1="12" y1="6" x2="12" y2="18" stroke="currentColor" strokeWidth="1"/>
+                          <line x1="8" y1="8.5" x2="8" y2="15.5" stroke="currentColor" strokeWidth="0.8"/>
+                          <line x1="16" y1="8.5" x2="16" y2="15.5" stroke="currentColor" strokeWidth="0.8"/>
+                        </svg>
+                        <span className="text-bb-muted text-xs uppercase tracking-widest font-heading">Top Scorer</span>
+                      </div>
+                      {topScorer && topScorer.touchdowns > 0 ? (
+                        <>
+                          <div className="font-heading font-black text-white text-lg leading-tight">
+                            #{topScorer.number} {playerLabel(topScorer)}
+                          </div>
+                          <div className="text-bb-muted text-xs">{topScorer.playerType.name}</div>
+                          <div className="font-heading font-black text-bb-gold text-3xl tabular-nums">
+                            {topScorer.touchdowns}
+                            <span className="text-bb-muted text-sm font-normal ml-1">TD</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-bb-muted/40 text-sm italic">No touchdowns yet</div>
+                      )}
+                    </div>
+
+                    {/* Top Thrower */}
+                    <div className="bg-bb-dark border border-bb-border rounded-sm p-5 space-y-3">
+                      <div className="flex items-center gap-2">
+                        {/* Pass/throw arc icon */}
+                        <svg viewBox="0 0 24 24" className="w-6 h-6 text-bb-gold" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path d="M5 19C5 19 9 5 19 5" strokeLinecap="round"/>
+                          <path d="M19 5L14 6M19 5L18 10" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                        <span className="text-bb-muted text-xs uppercase tracking-widest font-heading">Top Thrower</span>
+                      </div>
+                      {topThrower && topThrower.completePasses > 0 ? (
+                        <>
+                          <div className="font-heading font-black text-white text-lg leading-tight">
+                            #{topThrower.number} {playerLabel(topThrower)}
+                          </div>
+                          <div className="text-bb-muted text-xs">{topThrower.playerType.name}</div>
+                          <div className="font-heading font-black text-bb-gold text-3xl tabular-nums">
+                            {topThrower.completePasses}
+                            <span className="text-bb-muted text-sm font-normal ml-1">Completions</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-bb-muted/40 text-sm italic">No completions yet</div>
+                      )}
+                    </div>
+
+                    {/* Top Casualty */}
+                    <div className="bg-bb-dark border border-bb-border rounded-sm p-5 space-y-3">
+                      <div className="flex items-center gap-2">
+                        {/* Skull icon */}
+                        <svg viewBox="0 0 24 24" className="w-6 h-6 text-bb-gold" fill="currentColor">
+                          <path d="M12 3C7.58 3 4 6.58 4 11C4 13.5 5.1 15.7 6.8 17.2L7 21H17L17.2 17.2C18.9 15.7 20 13.5 20 11C20 6.58 16.42 3 12 3ZM9 17H8V14H9V17ZM9.5 12.5C8.67 12.5 8 11.83 8 11C8 10.17 8.67 9.5 9.5 9.5C10.33 9.5 11 10.17 11 11C11 11.83 10.33 12.5 9.5 12.5ZM16 17H15V14H16V17ZM14.5 12.5C13.67 12.5 13 11.83 13 11C13 10.17 13.67 9.5 14.5 9.5C15.33 9.5 16 10.17 16 11C16 11.83 15.33 12.5 14.5 12.5Z"/>
+                        </svg>
+                        <span className="text-bb-muted text-xs uppercase tracking-widest font-heading">Top Casualty</span>
+                      </div>
+                      {topCasualty && topCasualty.casualties > 0 ? (
+                        <>
+                          <div className="font-heading font-black text-white text-lg leading-tight">
+                            #{topCasualty.number} {playerLabel(topCasualty)}
+                          </div>
+                          <div className="text-bb-muted text-xs">{topCasualty.playerType.name}</div>
+                          <div className="font-heading font-black text-bb-gold text-3xl tabular-nums">
+                            {topCasualty.casualties}
+                            <span className="text-bb-muted text-sm font-normal ml-1">Cas</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-bb-muted/40 text-sm italic">No casualties yet</div>
+                      )}
+                    </div>
+
+                  </div>
+                )}
+              </section>
+
+            </div>
+          )
+        })()}
 
         {/* ══ TAB: TEAM NEWS ═══════════════════════════════════════════════════ */}
         {tab === 'news' && (

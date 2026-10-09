@@ -2,6 +2,8 @@
 
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import fs from 'fs/promises'
+import path from 'path'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { skillRollsAvailable, improvementOptions, canIncreaseStat, VALUE_MODIFIERS, type StatName } from '@/lib/ssp'
@@ -12,6 +14,20 @@ async function requireOwner(teamId: string) {
   const team = await prisma.team.findUnique({ where: { id: teamId }, select: { coachId: true } })
   if (!team || team.coachId !== session.coachId) return null
   return { session, team }
+}
+
+// A match "locks" its teams' rosters/treasury the moment its pre-match wizard has begun
+// (earliest possible write: the weather roll) and stays locked through LIVE, until its
+// post-match step sets status to COMPLETED — regardless of win/loss history.
+export async function hasActiveMatch(teamId: string): Promise<boolean> {
+  const match = await prisma.match.findFirst({
+    where: {
+      OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }],
+      AND: { OR: [{ status: 'LIVE' }, { status: 'SCHEDULED', weatherMdMatchEventId: { not: null } }] },
+    },
+    select: { id: true },
+  })
+  return !!match
 }
 
 export async function updatePlayer(formData: FormData) {
@@ -53,19 +69,179 @@ export async function updateTeamInfo(formData: FormData) {
 
   const team = await prisma.team.findUnique({ where: { id: teamId }, select: { coachId: true } })
   if (!team || team.coachId !== session.coachId) return
+  if (await hasActiveMatch(teamId)) return
 
-  const treasury         = Math.max(0, parseInt((formData.get('treasury')         as string) ?? '0', 10) || 0)
-  const rerolls          = Math.min(8, Math.max(0, parseInt((formData.get('rerolls')  as string) ?? '0', 10) || 0))
-  const assistantCoaches = Math.max(0, parseInt((formData.get('assistantCoaches') as string) ?? '0', 10) || 0)
-  const cheerleaders     = Math.max(0, parseInt((formData.get('cheerleaders')     as string) ?? '0', 10) || 0)
-  const fanFactor        = Math.max(0, parseInt((formData.get('fanFactor')        as string) ?? '0', 10) || 0)
-  const apothecary       = formData.get('apothecary') === 'true'
+  const treasury = Math.max(0, parseInt((formData.get('treasury') as string) ?? '0', 10) || 0)
+
+  await prisma.team.update({ where: { id: teamId }, data: { treasury } })
+
+  revalidatePath(`/teams/${teamId}`)
+}
+
+const ASSISTANT_COACH_COST = 10000
+const CHEERLEADER_COST     = 10000
+const APOTHECARY_COST      = 50000
+const FAN_FACTOR_COST      = 10000
+const MAX_FAN_FACTOR       = 9
+
+export async function buyAssistantCoach(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({ where: { id: teamId }, select: { treasury: true } })
+  if (!team || team.treasury < ASSISTANT_COACH_COST) return
 
   await prisma.team.update({
     where: { id: teamId },
-    data:  { treasury, rerolls, assistantCoaches, cheerleaders, fanFactor, apothecary },
+    data:  { assistantCoaches: { increment: 1 }, treasury: { decrement: ASSISTANT_COACH_COST } },
   })
+  revalidatePath(`/teams/${teamId}`)
+}
 
+export async function sackAssistantCoach(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { assistantCoaches: true, wins: true, draws: true, losses: true },
+  })
+  if (!team || team.assistantCoaches <= 0) return
+
+  const hasPlayed = team.wins + team.draws + team.losses > 0
+  const refund    = hasPlayed ? 0 : ASSISTANT_COACH_COST
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { assistantCoaches: { decrement: 1 }, treasury: { increment: refund } },
+  })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function buyCheerleader(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({ where: { id: teamId }, select: { treasury: true } })
+  if (!team || team.treasury < CHEERLEADER_COST) return
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { cheerleaders: { increment: 1 }, treasury: { decrement: CHEERLEADER_COST } },
+  })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function sackCheerleader(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { cheerleaders: true, wins: true, draws: true, losses: true },
+  })
+  if (!team || team.cheerleaders <= 0) return
+
+  const hasPlayed = team.wins + team.draws + team.losses > 0
+  const refund    = hasPlayed ? 0 : CHEERLEADER_COST
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { cheerleaders: { decrement: 1 }, treasury: { increment: refund } },
+  })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function buyApothecary(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { treasury: true, apothecary: true, race: { select: { hasApothecary: true } } },
+  })
+  if (!team || team.apothecary || !team.race.hasApothecary || team.treasury < APOTHECARY_COST) return
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { apothecary: true, treasury: { decrement: APOTHECARY_COST } },
+  })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function sackApothecary(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { apothecary: true, wins: true, draws: true, losses: true },
+  })
+  if (!team || !team.apothecary) return
+
+  const hasPlayed = team.wins + team.draws + team.losses > 0
+  const refund    = hasPlayed ? 0 : APOTHECARY_COST
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { apothecary: false, treasury: { increment: refund } },
+  })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function buyFanFactor(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { treasury: true, fanFactor: true, wins: true, draws: true, losses: true },
+  })
+  if (!team) return
+
+  const hasPlayed = team.wins + team.draws + team.losses > 0
+  if (hasPlayed || team.fanFactor >= MAX_FAN_FACTOR || team.treasury < FAN_FACTOR_COST) return
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { fanFactor: { increment: 1 }, treasury: { decrement: FAN_FACTOR_COST } },
+  })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function sackFanFactor(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { fanFactor: true, wins: true, draws: true, losses: true },
+  })
+  if (!team) return
+
+  const hasPlayed = team.wins + team.draws + team.losses > 0
+  if (hasPlayed || team.fanFactor <= 0) return
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { fanFactor: { decrement: 1 }, treasury: { increment: FAN_FACTOR_COST } },
+  })
   revalidatePath(`/teams/${teamId}`)
 }
 
@@ -122,6 +298,7 @@ export async function buyPlayer(formData: FormData) {
 
   if (!teamId || !playerTypeId || isNaN(number) || number < 1 || number > 99) return
   if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
 
   const [team, playerType] = await Promise.all([
     prisma.team.findUnique({
@@ -155,7 +332,7 @@ export async function buyPlayer(formData: FormData) {
   if (conflict) return
 
   await prisma.$transaction([
-    prisma.teamPlayer.create({ data: { teamId, playerTypeId, number, status: 'ACTIVE', value: 0 } }),
+    prisma.teamPlayer.create({ data: { teamId, playerTypeId, number, status: 'ACTIVE', value: playerType.cost } }),
     prisma.team.update({ where: { id: teamId }, data: { treasury: { decrement: playerType.cost } } }),
   ])
 
@@ -168,17 +345,33 @@ export async function sackPlayer(formData: FormData) {
 
   const player = await prisma.teamPlayer.findUnique({
     where:  { id: playerId },
-    select: { teamId: true, status: true, team: { select: { wins: true, draws: true, losses: true } } },
+    select: {
+      teamId: true, status: true, value: true,
+      playerType: { select: { cost: true } },
+      team: { select: { wins: true, draws: true, losses: true } },
+    },
   })
   if (!player || !['ACTIVE', 'MNG'].includes(player.status)) return
   if (!await requireOwner(player.teamId)) return
+  if (await hasActiveMatch(player.teamId)) return
 
   const totalGames = player.team.wins + player.team.draws + player.team.losses
 
-  await prisma.teamPlayer.update({
-    where: { id: playerId },
-    data:  { status: 'SACKED', teamGamesAtSack: totalGames },
-  })
+  if (totalGames === 0) {
+    // Pre-season: nothing has actually been played yet — freely reversible, full refund.
+    // Deleted outright rather than marked SACKED: there's no match history to preserve,
+    // and the coach is just trying a different build, not firing a player mid-season.
+    const refund = player.value > 0 ? player.value : player.playerType.cost
+    await prisma.$transaction([
+      prisma.teamPlayer.delete({ where: { id: playerId } }),
+      prisma.team.update({ where: { id: player.teamId }, data: { treasury: { increment: refund } } }),
+    ])
+  } else {
+    await prisma.teamPlayer.update({
+      where: { id: playerId },
+      data:  { status: 'SACKED', teamGamesAtSack: totalGames },
+    })
+  }
 
   revalidatePath(`/teams/${player.teamId}`)
 }
@@ -292,6 +485,7 @@ export async function signJourneyman(formData: FormData) {
 
   const teamId = journeyman.side === 'home' ? journeyman.match.homeTeamId : journeyman.match.awayTeamId
   if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
 
   const team = await prisma.team.findUnique({
     where:  { id: teamId },
@@ -344,8 +538,56 @@ export async function fireJourneyman(formData: FormData) {
 
   const teamId = journeyman.side === 'home' ? journeyman.match.homeTeamId : journeyman.match.awayTeamId
   if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
 
   await prisma.matchJourneyman.update({ where: { id: journeymanId }, data: { resolved: true } })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function buyReroll(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:   { id: teamId },
+    include: { race: true },
+  })
+  if (!team) return
+
+  // CRP1: starting re-rolls (before a team's first match) cost the listed price; re-rolls
+  // added between league matches cost double.
+  const hasPlayed = team.wins + team.draws + team.losses > 0
+  const cost = hasPlayed ? team.race.rerollPrice * 2 : team.race.rerollPrice
+  if (team.rerolls >= 8 || team.treasury < cost) return
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { rerolls: { increment: 1 }, treasury: { decrement: cost } },
+  })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function sackReroll(formData: FormData) {
+  const teamId = formData.get('teamId') as string
+  if (!teamId) return
+  if (!await requireOwner(teamId)) return
+  if (await hasActiveMatch(teamId)) return
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { rerolls: true, wins: true, draws: true, losses: true, race: { select: { rerollPrice: true } } },
+  })
+  if (!team || team.rerolls <= 0) return
+
+  const hasPlayed = team.wins + team.draws + team.losses > 0
+  const refund    = hasPlayed ? 0 : team.race.rerollPrice
+
+  await prisma.team.update({
+    where: { id: teamId },
+    data:  { rerolls: { decrement: 1 }, treasury: { increment: refund } },
+  })
   revalidatePath(`/teams/${teamId}`)
 }
 
@@ -370,6 +612,7 @@ export async function reinstatePlayer(formData: FormData) {
   })
   if (!player || player.status !== 'SACKED') return
   if (!await requireOwner(player.teamId)) return
+  if (await hasActiveMatch(player.teamId)) return
 
   const totalGames = player.team.wins + player.team.draws + player.team.losses
   if (totalGames !== player.teamGamesAtSack) return
@@ -403,6 +646,7 @@ export async function killPlayer(formData: FormData) {
 
   const ctx = await requireOwner(player.teamId)
   if (!ctx) return
+  if (await hasActiveMatch(player.teamId)) return
 
   const playerName   = player.name?.trim() || 'An unnamed warrior'
   const positionName = player.playerType.name
@@ -455,4 +699,41 @@ export async function appendTeamNewsNote(formData: FormData) {
 
   revalidatePath(`/teams/${post.teamId}`)
   revalidatePath('/')
+}
+
+export async function uploadTeamLogo(formData: FormData): Promise<{ error?: string } | void> {
+  const session = await getSession()
+  if (!session) return { error: 'Unauthorized' }
+
+  const teamId = formData.get('teamId') as string | null
+  if (!teamId) return { error: 'Missing teamId' }
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { coachId: true, logoUrl: true },
+  })
+  if (!team || team.coachId !== session.coachId) return { error: 'Unauthorized' }
+
+  const file = formData.get('logo') as File | null
+  if (!file || file.size === 0) return { error: 'No file selected' }
+  if (file.size > 2 * 1024 * 1024) return { error: 'File too large — maximum 2 MB' }
+  if (!file.type.startsWith('image/')) return { error: 'Only image files are allowed' }
+
+  const ext = (file.name.split('.').pop() ?? 'png').toLowerCase()
+  const filename = `${teamId}.${ext}`
+  const dir      = path.join(process.cwd(), 'public', 'team-logos')
+  const filepath = path.join(dir, filename)
+
+  await fs.mkdir(dir, { recursive: true })
+
+  // Remove old logo if it has a different extension
+  if (team.logoUrl && !team.logoUrl.endsWith(`/${filename}`)) {
+    const oldPath = path.join(process.cwd(), 'public', team.logoUrl)
+    await fs.unlink(oldPath).catch(() => {})
+  }
+
+  await fs.writeFile(filepath, Buffer.from(await file.arrayBuffer()))
+  await prisma.team.update({ where: { id: teamId }, data: { logoUrl: `/team-logos/${filename}` } })
+
+  revalidatePath(`/teams/${teamId}`)
 }

@@ -58,7 +58,7 @@ export async function getTeamById(id: string) {
           matchStats: {
             select: {
               id: true, touchdowns: true, completePasses: true, interceptions: true, casualties: true, mvp: true, ssp: true,
-              match: { select: { id: true, round: true, homeTeam: { select: { name: true } }, awayTeam: { select: { name: true } } } },
+              match: { select: { id: true, round: true, homeScore: true, awayScore: true, homeTeam: { select: { id: true, name: true } }, awayTeam: { select: { id: true, name: true } } } },
             },
             orderBy: { createdAt: 'desc' },
           },
@@ -67,6 +67,31 @@ export async function getTeamById(id: string) {
       },
     },
   })
+}
+
+// All completed matches for a team, used to power per-player match history in the roster modal.
+export async function getTeamCompletedMatches(teamId: string) {
+  const [homeMatches, awayMatches] = await Promise.all([
+    prisma.match.findMany({
+      where:   { homeTeamId: teamId, status: 'COMPLETED' },
+      select:  {
+        id: true, round: true, homeScore: true, awayScore: true,
+        homeTeam: { select: { id: true, name: true } },
+        awayTeam: { select: { id: true, name: true } },
+      },
+      orderBy: { round: 'desc' },
+    }),
+    prisma.match.findMany({
+      where:   { awayTeamId: teamId, status: 'COMPLETED' },
+      select:  {
+        id: true, round: true, homeScore: true, awayScore: true,
+        homeTeam: { select: { id: true, name: true } },
+        awayTeam: { select: { id: true, name: true } },
+      },
+      orderBy: { round: 'desc' },
+    }),
+  ])
+  return [...homeMatches, ...awayMatches].sort((a, b) => b.round - a.round)
 }
 
 // Journeymen hired by this team in now-completed matches, not yet signed or fired.

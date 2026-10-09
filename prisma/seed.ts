@@ -289,11 +289,15 @@ async function main() {
   raceByName['Lizardman'] = raceByName['Lizardmen']
 
   const league = await prisma.league.create({
-    data: { name: 'The Reikland Rumble League', season: 1 },
+    data: { name: 'The Reikland Rumble League' },
+  })
+
+  const season = await prisma.season.create({
+    data: { name: 'Season 1', season: 1, status: 'ACTIVE', leagueId: league.id },
   })
 
   await prisma.division.create({
-    data: { name: 'Premier Division', leagueId: league.id },
+    data: { name: 'Premier Division', seasonId: season.id },
   })
 
   const defaultHash = await bcrypt.hash('password123', 10)

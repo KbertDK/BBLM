@@ -70,9 +70,16 @@ const events = [
   // Touch Down
   { name: 'Touch Down', causesCasualty: false, description: null, dieRoll: null, eventType: 'Touch Down', ssp: 3 },
 
-  // Weather
+  // Weather (CRP1 Weather Table: 2D6 roll; 4-10 are all "Nice" — one row per sum since
+  // MdMatchEvent.dieRoll is a single scalar, not a range)
   { name: 'Sweltering Heat', causesCasualty: false, description: "It's so hot and humid that some players collapse from heat exhaustion. Roll a D6 for each player on the field after a touchdown is scored. On a roll of 1 the player collapses and may not be set up for the next kick-off.", dieRoll: 2, eventType: 'Weather', ssp: null },
   { name: 'Very Sunny', causesCasualty: false, description: "A glorious day, but the blinding sunshine causes a -1 modifier on all attempts to pass the ball.", dieRoll: 3, eventType: 'Weather', ssp: null },
+  { name: 'Nice', causesCasualty: false, description: "Perfect Blood Bowl Weather.", dieRoll: 4, eventType: 'Weather', ssp: null },
+  { name: 'Nice', causesCasualty: false, description: "Perfect Blood Bowl Weather.", dieRoll: 5, eventType: 'Weather', ssp: null },
+  { name: 'Nice', causesCasualty: false, description: "Perfect Blood Bowl Weather.", dieRoll: 6, eventType: 'Weather', ssp: null },
+  { name: 'Nice', causesCasualty: false, description: "Perfect Blood Bowl Weather.", dieRoll: 7, eventType: 'Weather', ssp: null },
+  { name: 'Nice', causesCasualty: false, description: "Perfect Blood Bowl Weather.", dieRoll: 8, eventType: 'Weather', ssp: null },
+  { name: 'Nice', causesCasualty: false, description: "Perfect Blood Bowl Weather.", dieRoll: 9, eventType: 'Weather', ssp: null },
   { name: 'Nice', causesCasualty: false, description: "Perfect Blood Bowl Weather.", dieRoll: 10, eventType: 'Weather', ssp: null },
   { name: 'Pouring Rain', causesCasualty: false, description: "It's raining, making the ball slippery and difficult to hold. A -1 modifier applies to all catch, intercept or pick-up rolls.", dieRoll: 11, eventType: 'Weather', ssp: null },
   { name: 'Blizzard', causesCasualty: false, description: "It's cold and snowing! The ice on the field means that any player attempting to move an extra square will slip and fall on a roll of 1-2, while the snow means that only quick or short passes can be attempted.", dieRoll: 12, eventType: 'Weather', ssp: null },

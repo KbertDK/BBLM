@@ -12,6 +12,9 @@ const EVENT_ICON: Record<string, string> = {
   CASUALTY:     '💀',
   INTERCEPTION: '🖐',
   HALFTIME:     '⛔',
+  WEATHER:      '🌦️',
+  SPECIAL_CARD: '🃏',
+  KICKOFF:      '🏈',
 }
 
 const EVENT_COLOR: Record<string, string> = {
@@ -19,6 +22,9 @@ const EVENT_COLOR: Record<string, string> = {
   CASUALTY:     'border-bb-crimson/40 bg-bb-crimson/5 text-white',
   INTERCEPTION: 'border-bb-border/50 text-bb-muted',
   HALFTIME:     'border-transparent text-bb-muted/50 italic text-center text-xs',
+  WEATHER:      'border-sky-700/40 bg-sky-900/10 text-sky-200',
+  SPECIAL_CARD: 'border-purple-700/40 bg-purple-900/10 text-purple-200',
+  KICKOFF:      'border-sky-700/40 bg-sky-900/10 text-sky-200',
 }
 
 export default async function MatchReportPage({ params }: PageProps) {
@@ -87,7 +93,7 @@ export default async function MatchReportPage({ params }: PageProps) {
           {/* League / Round / Date */}
           <div className="text-center mb-6">
             <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">
-              {match.league.name} · Season {match.league.season} · Round {match.round}
+              {match.league.name}{match.season ? ` · ${match.season.name}` : ''} · Round {match.round}
               {match.scheduledAt && ` · ${format(new Date(match.scheduledAt), 'd MMMM yyyy')}`}
             </span>
           </div>

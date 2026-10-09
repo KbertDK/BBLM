@@ -19,30 +19,49 @@ model RuleSet {
   pointsLoss      Int           @default(0)
   pointsWin       Int           @default(3)
   leagues         League[]
+  spirallingExpenseTiers SpirallingExpenseTier[]
+}
+
+model SpirallingExpenseTier {
+  id                 String  @id @default(cuid())
+  ruleSetId          String
+  teamValueThreshold Int
+  expenseAmount      Int
+  ruleSet            RuleSet @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
 }
 
 model League {
-  id             String       @id @default(cuid())
+  id             String    @id @default(cuid())
   name           String
-  season         Int
-  isHidden       Boolean      @default(false)
-  createdAt      DateTime     @default(now())
-  status         LeagueStatus @default(READY)
+  isHidden       Boolean   @default(false)
+  createdAt      DateTime  @default(now())
   ruleSetId      String?
-  divisions      Division[]
-  ruleSet        RuleSet?     @relation(fields: [ruleSetId], references: [id])
+  ruleSet        RuleSet?  @relation(fields: [ruleSetId], references: [id])
   matches        Match[]
   teams          Team[]
-  primaryCoaches Coach[]      @relation("CoachPrimaryLeague")
+  seasons        Season[]
+  primaryCoaches Coach[]   @relation("CoachPrimaryLeague")
+}
+
+model Season {
+  id        String       @id @default(cuid())
+  leagueId  String
+  name      String
+  season    Int
+  status    SeasonStatus @default(PLANNING)
+  createdAt DateTime     @default(now())
+  league    League       @relation(fields: [leagueId], references: [id])
+  divisions Division[]
+  matches   Match[]
 }
 
 model Division {
   id          String       @id @default(cuid())
   name        String
-  leagueId    String
+  seasonId    String
   isHidden    Boolean      @default(false)
   createdAt   DateTime     @default(now())
-  league      League       @relation(fields: [leagueId], references: [id])
+  season      Season       @relation(fields: [seasonId], references: [id])
   teams       Team[]
   tournaments Tournament[] @relation("DivisionToTournament")
 }
@@ -137,6 +156,7 @@ model Team {
   rerolls          Int          @default(0)
   treasury         Int          @default(0)
   isActive         Boolean      @default(true)
+  logoUrl          String?
   awayMatches      Match[]      @relation("AwayTeam")
   homeMatches      Match[]      @relation("HomeTeam")
   coach            Coach        @relation(fields: [coachId], references: [id])
@@ -159,7 +179,7 @@ model TeamPlayer {
   status          PlayerStatus @default(ACTIVE)
   touchdowns      Int          @default(0)
   mvp             Int          @default(0)
-  niggling        String       @default("")
+  nigglingInjuries Int         @default(0)
   ssp             Int          @default(0)
   value           Int          @default(0)
   teamGamesAtSack Int?
@@ -211,22 +231,69 @@ model Match {
   awayScore    Int?
   createdAt    DateTime    @default(now())
   tournamentId      String?
+  seasonId          String?
   homeTeamValue     Int?
   awayTeamValue     Int?
   homeTeamFanFactor Int?
   awayTeamFanFactor Int?
   homeApothecaryUsed Boolean @default(false)
   awayApothecaryUsed Boolean @default(false)
+  weatherMdMatchEventId String?
+  homePettyCash Int @default(0)
+  awayPettyCash Int @default(0)
+  homeFans Int?
+  awayFans Int?
+  homeFame Int?
+  awayFame Int?
+  weather           MdMatchEvent?    @relation(fields: [weatherMdMatchEventId], references: [id])
   awayTeam          Team             @relation("AwayTeam", fields: [awayTeamId], references: [id])
   homeTeam          Team             @relation("HomeTeam", fields: [homeTeamId], references: [id])
   league            League           @relation(fields: [leagueId], references: [id])
   tournament        Tournament?      @relation(fields: [tournamentId], references: [id])
+  season            Season?          @relation(fields: [seasonId], references: [id])
   events            MatchEvent[]
   mercs             MatchMerc[]
   starPlayers       MatchStarPlayer[]
   journeymen        MatchJourneyman[]
   inducements       MatchInducement[]
   matchPlayerStats  MatchPlayerStat[]
+  specialPlayCards  MatchSpecialPlayCard[]
+}
+
+model MdSpecialPlayDeck {
+  id    String @id @default(cuid())
+  name  String @unique
+  price Int
+  cards MdSpecialPlayCard[]
+  draws MatchSpecialPlayCard[]
+}
+
+model MdSpecialPlayCard {
+  id          String @id @default(cuid())
+  deckId      String
+  cardLabel   String
+  name        String
+  description String
+  timing      String
+  effect      String
+  deck        MdSpecialPlayDeck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  draws       MatchSpecialPlayCard[]
+
+  @@unique([deckId, cardLabel])
+}
+
+model MatchSpecialPlayCard {
+  id        String   @id @default(cuid())
+  matchId   String
+  side      String
+  deckId    String
+  cost      Int
+  cardId    String?
+  turn      Int?
+  createdAt DateTime @default(now())
+  match     Match              @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  deck      MdSpecialPlayDeck  @relation(fields: [deckId], references: [id])
+  card      MdSpecialPlayCard? @relation(fields: [cardId], references: [id])
 }
 
 model MatchStarPlayer {
@@ -319,6 +386,7 @@ model MdMatchEvent {
   ssp            Int?
   createdAt      DateTime     @default(now())
   matchEvents    MatchEvent[]
+  matches        Match[]
 }
 
 model MdStarPlayer {
@@ -358,7 +426,8 @@ enum CoachRole {
   COACH
 }
 
-enum LeagueStatus {
+enum SeasonStatus {
+  PLANNING
   READY
   ACTIVE
   ENDED

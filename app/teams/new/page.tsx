@@ -20,7 +20,7 @@ export default async function NewTeamPage({
     prisma.league.findMany({
       where: {
         isHidden: false,
-        status:   { not: 'ENDED' },
+        seasons:  { some: { status: { in: ['PLANNING', 'READY', 'ACTIVE'] } } },
         ruleSet:  { status: 'ACTIVE' },
       },
       include: {
@@ -45,7 +45,6 @@ export default async function NewTeamPage({
     .map((l) => ({
       id:     l.id,
       name:   l.name,
-      season: l.season,
       ruleSet: {
         name:            l.ruleSet.name,
         startIncome:     l.ruleSet.startIncome,

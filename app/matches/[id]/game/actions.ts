@@ -4,6 +4,9 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
+import { spirallingExpenseFor } from '@/lib/spirallingExpenses'
+import { computePettyCashReturn } from '@/lib/postMatchFinance'
+import { computeTV } from '@/lib/teamValue'
 
 async function requireMatchParticipant(matchId: string) {
   const session = await getSession()
@@ -71,6 +74,107 @@ export async function savePrematchData(matchId: string, data: {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
   await prisma.match.update({ where: { id: matchId }, data })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function rollWeather(matchId: string, die1: number, die2: number) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  if (die1 < 1 || die1 > 6 || die2 < 1 || die2 > 6) return
+
+  const result = await prisma.mdMatchEvent.findFirst({
+    where:  { eventType: 'Weather', dieRoll: die1 + die2 },
+    select: { id: true, name: true, description: true },
+  })
+  if (!result) return
+
+  // Record immediately as a real MatchEvent row (not just a Match.weatherMdMatchEventId pointer),
+  // so the roll is durably logged even if the match is later abandoned before completion.
+  await prisma.$transaction([
+    prisma.match.update({ where: { id: matchId }, data: { weatherMdMatchEventId: result.id } }),
+    prisma.matchEvent.create({
+      data: {
+        matchId,
+        type:  'WEATHER',
+        label: `🌦️ Weather — ${result.name}: ${result.description ?? ''}`,
+        mdMatchEventId: result.id,
+      },
+    }),
+  ])
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+// The caller (client) has already looked up the result row (via matchData.kickoffTable) to
+// build the rich `label` — all the roll-comparison/affected-player detail lives in that label,
+// same convention as every other event type. This just re-resolves the row server-side for the
+// mdMatchEventId FK and persists the event.
+export async function rollKickoff(matchId: string, dieRoll: number, label: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  if (dieRoll < 2 || dieRoll > 12) return
+
+  const result = await prisma.mdMatchEvent.findFirst({
+    where:  { eventType: 'Kick off', dieRoll },
+    select: { id: true },
+  })
+  if (!result) return
+
+  await prisma.matchEvent.create({
+    data: { matchId, type: 'KICKOFF', label, mdMatchEventId: result.id },
+  })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function commitPettyCash(matchId: string, homePettyGold: number, awayPettyGold: number) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  if (homePettyGold < 0 || awayPettyGold < 0) return
+
+  const match = await prisma.match.findUnique({
+    where:  { id: matchId },
+    select: { homePettyCash: true, awayPettyCash: true, homeTeamId: true, awayTeamId: true },
+  })
+  if (!match) return
+
+  const [homeTeam, awayTeam] = await Promise.all([
+    prisma.team.findUnique({ where: { id: match.homeTeamId }, select: { treasury: true } }),
+    prisma.team.findUnique({ where: { id: match.awayTeamId }, select: { treasury: true } }),
+  ])
+  if (!homeTeam || !awayTeam) return
+
+  const homeDelta = homePettyGold - match.homePettyCash
+  const awayDelta = awayPettyGold - match.awayPettyCash
+  if (homeTeam.treasury - homeDelta < 0 || awayTeam.treasury - awayDelta < 0) return
+
+  await prisma.$transaction([
+    prisma.team.update({ where: { id: match.homeTeamId }, data: { treasury: { decrement: homeDelta } } }),
+    prisma.team.update({ where: { id: match.awayTeamId }, data: { treasury: { decrement: awayDelta } } }),
+    prisma.match.update({ where: { id: matchId }, data: { homePettyCash: homePettyGold, awayPettyCash: awayPettyGold } }),
+  ])
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function saveFansAndFame(
+  matchId: string,
+  homeDie1: number, homeDie2: number,
+  awayDie1: number, awayDie2: number,
+) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  if ([homeDie1, homeDie2, awayDie1, awayDie2].some((d) => d < 1 || d > 6)) return
+
+  const match = await prisma.match.findUnique({
+    where:  { id: matchId },
+    select: { homeTeam: { select: { fanFactor: true } }, awayTeam: { select: { fanFactor: true } } },
+  })
+  if (!match) return
+
+  const homeFans = (homeDie1 + homeDie2 + match.homeTeam.fanFactor) * 1000
+  const awayFans = (awayDie1 + awayDie2 + match.awayTeam.fanFactor) * 1000
+  const homeFame = homeFans <= awayFans ? 0 : homeFans >= awayFans * 2 ? 2 : 1
+  const awayFame = awayFans <= homeFans ? 0 : awayFans >= homeFans * 2 ? 2 : 1
+
+  await prisma.match.update({ where: { id: matchId }, data: { homeFans, awayFans, homeFame, awayFame } })
   revalidatePath(`/matches/${matchId}/game`)
 }
 
@@ -166,6 +270,38 @@ export async function removeInducement(matchId: string, id: string) {
   revalidatePath(`/matches/${matchId}/game`)
 }
 
+export async function buySpecialPlayCard(matchId: string, side: 'home' | 'away', deckId: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  const deck = await prisma.mdSpecialPlayDeck.findUnique({ where: { id: deckId } })
+  if (!deck) return
+  await prisma.matchSpecialPlayCard.create({ data: { matchId, side, deckId, cost: deck.price } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function removeSpecialPlayCard(matchId: string, id: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  // Only an un-revealed draw may be cancelled — one already played live is locked in.
+  await prisma.matchSpecialPlayCard.deleteMany({ where: { id, matchId, cardId: null } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
+export async function registerSpecialPlayCard(matchId: string, slotId: string, cardId: string, turn: number) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+  if (turn < 1 || turn > 16) return
+  const slot = await prisma.matchSpecialPlayCard.findUnique({
+    where:  { id: slotId },
+    select: { matchId: true, deckId: true, cardId: true },
+  })
+  if (!slot || slot.matchId !== matchId || slot.cardId) return
+  const card = await prisma.mdSpecialPlayCard.findUnique({ where: { id: cardId }, select: { deckId: true } })
+  if (!card || card.deckId !== slot.deckId) return
+  await prisma.matchSpecialPlayCard.update({ where: { id: slotId }, data: { cardId, turn } })
+  revalidatePath(`/matches/${matchId}/game`)
+}
+
 export async function markInducementUsed(matchId: string, id: string, half?: 1 | 2) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
@@ -198,15 +334,16 @@ export async function startMatch(matchId: string) {
 }
 
 interface PlayerUpdate {
-  playerId: string
-  deltaTouchdowns: number
-  deltaCompletePasses: number
-  deltaInterceptions: number
-  deltaCasualties: number
-  deltaSSP: number
-  deltaMVP: number
-  newStatus: 'ACTIVE' | 'MNG' | 'DEAD' | null
-  isDeathPost: boolean
+  playerId:              string
+  deltaTouchdowns:       number
+  deltaCompletePasses:   number
+  deltaInterceptions:    number
+  deltaCasualties:       number
+  deltaSSP:              number
+  deltaMVP:              number
+  deltaNigglingInjuries: number
+  newStatus:             'ACTIVE' | 'MNG' | 'DEAD' | null
+  isDeathPost:           boolean
 }
 
 interface JourneymanUpdate {
@@ -272,11 +409,30 @@ export async function completeMatchFull(formData: FormData) {
   const match = await prisma.match.findUnique({
     where:  { id: matchId },
     select: {
-      status:     true,
-      homeTeamId: true,
-      awayTeamId: true,
-      homeTeam:   { select: { name: true } },
-      awayTeam:   { select: { name: true } },
+      status:         true,
+      homeTeamId:     true,
+      awayTeamId:     true,
+      homeTeamValue:  true,
+      awayTeamValue:  true,
+      homePettyCash:  true,
+      awayPettyCash:  true,
+      homeTeam: {
+        select: {
+          name: true, rerolls: true, assistantCoaches: true, cheerleaders: true, fanFactor: true, apothecary: true,
+          race:    { select: { rerollPrice: true } },
+          players: { where: { status: 'ACTIVE' }, select: { status: true, value: true, playerType: { select: { cost: true } } } },
+        },
+      },
+      awayTeam: {
+        select: {
+          name: true, rerolls: true, assistantCoaches: true, cheerleaders: true, fanFactor: true, apothecary: true,
+          race:    { select: { rerollPrice: true } },
+          players: { where: { status: 'ACTIVE' }, select: { status: true, value: true, playerType: { select: { cost: true } } } },
+        },
+      },
+      league: { select: { ruleSet: { select: { spirallingExpenseTiers: {
+        select: { teamValueThreshold: true, expenseAmount: true },
+      } } } } },
     },
   })
   if (!match || match.status === 'COMPLETED') return
@@ -284,6 +440,49 @@ export async function completeMatchFull(formData: FormData) {
   const homeWin = homeScore > awayScore
   const awayWin = awayScore > homeScore
   const isDraw  = homeScore === awayScore
+
+  // Petty Cash accounting (CRP1): only UNSPENT Petty Cash returns to treasury — inducement
+  // gold from the Team Value gap is "use it or lose it" and never returns either way.
+  const [
+    homeMercAgg, homeStarAgg, homeIndAgg, homeCardAgg,
+    awayMercAgg, awayStarAgg, awayIndAgg, awayCardAgg,
+  ] = await Promise.all([
+    prisma.matchMerc.aggregate({ where: { matchId, side: 'home' }, _sum: { cost: true } }),
+    prisma.matchStarPlayer.aggregate({ where: { matchId, side: 'home', isCompanion: false }, _sum: { price: true } }),
+    prisma.matchInducement.aggregate({ where: { matchId, side: 'home' }, _sum: { cost: true } }),
+    prisma.matchSpecialPlayCard.aggregate({ where: { matchId, side: 'home' }, _sum: { cost: true } }),
+    prisma.matchMerc.aggregate({ where: { matchId, side: 'away' }, _sum: { cost: true } }),
+    prisma.matchStarPlayer.aggregate({ where: { matchId, side: 'away', isCompanion: false }, _sum: { price: true } }),
+    prisma.matchInducement.aggregate({ where: { matchId, side: 'away' }, _sum: { cost: true } }),
+    prisma.matchSpecialPlayCard.aggregate({ where: { matchId, side: 'away' }, _sum: { cost: true } }),
+  ])
+  const homeSpent = (homeMercAgg._sum.cost ?? 0) + (homeStarAgg._sum.price ?? 0) + (homeIndAgg._sum.cost ?? 0) + (homeCardAgg._sum.cost ?? 0)
+  const awaySpent = (awayMercAgg._sum.cost ?? 0) + (awayStarAgg._sum.price ?? 0) + (awayIndAgg._sum.cost ?? 0) + (awayCardAgg._sum.cost ?? 0)
+
+  // Struck from the frozen roster-only value (not match.homeTeamValue/awayTeamValue, which
+  // include this match's journeymen/mercs/stars) — matches the gap basis used when the
+  // Inducement gold budget was originally offered, so the split vs. Petty Cash is accurate.
+  const { homePettyCashReturned, awayPettyCashReturned } = computePettyCashReturn({
+    homeTeamValue: computeTV(match.homeTeam),
+    awayTeamValue: computeTV(match.awayTeam),
+    homePettyCash: match.homePettyCash,
+    awayPettyCash: match.awayPettyCash,
+    homeSpent,
+    awaySpent,
+  })
+
+  // Spiralling Expenses (CRP1): deducted after winnings/Petty Cash return, never below zero.
+  const tiers = match.league.ruleSet?.spirallingExpenseTiers ?? []
+  const homeExpense = spirallingExpenseFor(match.homeTeamValue ?? 0, tiers)
+  const awayExpense = spirallingExpenseFor(match.awayTeamValue ?? 0, tiers)
+  const [homeTeamRow, awayTeamRow] = await Promise.all([
+    prisma.team.findUnique({ where: { id: match.homeTeamId }, select: { treasury: true } }),
+    prisma.team.findUnique({ where: { id: match.awayTeamId }, select: { treasury: true } }),
+  ])
+  const homeAvailable = (homeTeamRow?.treasury ?? 0) + homeWinnings + homePettyCashReturned
+  const awayAvailable = (awayTeamRow?.treasury ?? 0) + awayWinnings + awayPettyCashReturned
+  const homeExpenseClamped = Math.min(homeExpense, Math.max(0, homeAvailable))
+  const awayExpenseClamped = Math.min(awayExpense, Math.max(0, awayAvailable))
 
   const deathIds = playerUpdates.filter((u) => u.isDeathPost).map((u) => u.playerId)
   const deathPlayers = deathIds.length > 0
@@ -319,7 +518,7 @@ export async function completeMatchFull(formData: FormData) {
         wins:     { increment: homeWin ? 1 : 0 },
         losses:   { increment: awayWin ? 1 : 0 },
         draws:    { increment: isDraw  ? 1 : 0 },
-        treasury: { increment: homeWinnings },
+        treasury: { increment: homeWinnings + homePettyCashReturned - homeExpenseClamped },
       },
     }),
     prisma.team.update({
@@ -328,7 +527,7 @@ export async function completeMatchFull(formData: FormData) {
         wins:     { increment: awayWin ? 1 : 0 },
         losses:   { increment: homeWin ? 1 : 0 },
         draws:    { increment: isDraw  ? 1 : 0 },
-        treasury: { increment: awayWinnings },
+        treasury: { increment: awayWinnings + awayPettyCashReturned - awayExpenseClamped },
       },
     }),
     ...playerUpdates.map((u) => {
@@ -342,6 +541,7 @@ export async function completeMatchFull(formData: FormData) {
         mvp:            { increment: u.deltaMVP },
       }
       if (u.newStatus !== null) data.status = u.newStatus
+      if (u.deltaNigglingInjuries > 0) data.nigglingInjuries = { increment: u.deltaNigglingInjuries }
       return prisma.teamPlayer.update({ where: { id: u.playerId }, data })
     }),
     ...(staleMngIds.length > 0
@@ -399,10 +599,14 @@ export async function completeMatchFull(formData: FormData) {
   ])
 
   // Sync the authoritative event log from the client — wipe any partially-saved
-  // events and replace with the complete ordered list from local state.
-  if (events.length > 0) {
+  // events and replace with the complete ordered list from local state. WEATHER events are
+  // excluded: `rollWeather` already wrote that row directly (durable from the moment it's
+  // rolled, even if the match is later abandoned), and it has its own per-roll mdMatchEventId
+  // resolution that doesn't fit the generic MD_EVENT_NAME-by-type lookup below.
+  const syncableEvents = events.filter((e) => e.type !== 'WEATHER')
+  if (syncableEvents.length > 0) {
     // Bulk-resolve MdMatchEvent IDs for known event types
-    const uniqueTypes = [...new Set(events.map((e) => e.type).filter((t) => t in MD_EVENT_NAME))]
+    const uniqueTypes = [...new Set(syncableEvents.map((e) => e.type).filter((t) => t in MD_EVENT_NAME))]
     const mdRows = uniqueTypes.length
       ? await prisma.mdMatchEvent.findMany({
           where: { name: { in: uniqueTypes.map((t) => MD_EVENT_NAME[t]) } },
@@ -417,14 +621,14 @@ export async function completeMatchFull(formData: FormData) {
 
     const base = Date.now()
     await prisma.$transaction([
-      prisma.matchEvent.deleteMany({ where: { matchId } }),
+      prisma.matchEvent.deleteMany({ where: { matchId, type: { not: 'WEATHER' } } }),
       prisma.matchEvent.createMany({
-        data: events.map((e, i) => ({
+        data: syncableEvents.map((e, i) => ({
           matchId,
           type:          e.type,
           label:         e.label,
           mdMatchEventId: getMdId(e.type),
-          createdAt:     new Date(base + i),   // 1 ms apart preserves order
+          createdAt:     new Date(base + i),   // 1 ms apart preserves order; always after the WEATHER row's roll-time createdAt
         })),
       }),
     ])

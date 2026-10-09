@@ -216,7 +216,7 @@ An individual player on a team roster.
 | status | PlayerStatus | ACTIVE / MNG / SACKED / DEAD |
 | touchdowns, completePasses, interceptions, casualties, mvp | Int | Career stats |
 | ssp | Int | Career Star Player Points |
-| niggling | String (default "") | Injury description |
+| nigglingInjuries | Int (default 0) | Count of permanent niggling injuries (system-set, not coach-editable) |
 | value | Int (0) | Custom value override (0 = use playerType.cost) |
 | teamGamesAtSack | Int? | Used for reinstatement window |
 | createdAt | DateTime | Auto |
