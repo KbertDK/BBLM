@@ -12,9 +12,9 @@ Internet
     │
     ▼
 [Caddy]  — reverse proxy, auto-HTTPS via Let's Encrypt
-    ├── bblm.yourdomain.com      → localhost:3000  (Production)
-    ├── staging.yourdomain.com   → localhost:3001  (Staging)
-    └── dev.yourdomain.com       → localhost:3002  (Development)
+    ├── bbgames.dk               → localhost:3000  (Production)
+    ├── staging.bbgames.dk       → localhost:3001  (Staging)
+    └── dev.bbgames.dk           → localhost:3002  (Development)
          │                (dev subdomain can be IP-restricted)
 [PM2]    — three Node.js processes, one per environment
     │
@@ -55,13 +55,16 @@ C:\apps\
 
 ## 2. DNS Configuration
 
-At your domain registrar, add three A records, all pointing to your external IP:
+At your domain registrar, add these A records, all pointing to your external IP:
 
 ```
-bblm.yourdomain.com         →  YOUR.EXTERNAL.IP
-staging.yourdomain.com      →  YOUR.EXTERNAL.IP
-dev.yourdomain.com          →  YOUR.EXTERNAL.IP
+bbgames.dk              →  YOUR.EXTERNAL.IP   (apex/root domain)
+www.bbgames.dk          →  YOUR.EXTERNAL.IP   (redirects to the apex — see Caddyfile below)
+staging.bbgames.dk      →  YOUR.EXTERNAL.IP
+dev.bbgames.dk          →  YOUR.EXTERNAL.IP
 ```
+
+> Some registrars don't allow a plain A record on the apex and call it something else (e.g. "root" or "@") — point that at the same IP.
 
 On your router: forward **ports 80 and 443** to the Windows Server's internal IP address. Leave all other ports closed externally.
 
@@ -91,6 +94,15 @@ PostgreSQL listens only on `localhost` by default — do **not** change this. It
 
 ## 4. Code Deployment
 
+> **Schema changes going forward:** the repo now has a baseline migration (`prisma/migrations/`)
+> covering the full schema as of today, so `prisma migrate deploy` works on a fresh database.
+> For any *future* schema change, generate a new migration on your dev machine and commit it —
+> `prisma migrate dev` needs an interactive terminal, so from a script/CI shell use:
+> `npx prisma migrate dev --create-only --name describe_the_change`, review the generated SQL in
+> `prisma/migrations/`, then run it normally (`npx prisma migrate dev`) once, commit the folder,
+> and `prisma migrate deploy` will pick it up on staging/prod. Don't go back to `prisma db push`
+> once migrations exist — it bypasses migration history and the three databases will drift apart.
+
 ### Initial setup (do once per environment)
 
 ```powershell
@@ -99,31 +111,39 @@ cd C:\apps
 git clone https://github.com/YOUR_USER/BBLM bblm-prod
 cd bblm-prod
 npm install
-copy .env.example .env.production   # then edit it (see section 5)
+copy .env.example .env   # then edit it (see section 5)
 
 # Staging
 cd C:\apps
 git clone https://github.com/YOUR_USER/BBLM bblm-staging
 cd bblm-staging
 npm install
-copy .env.example .env.staging
+copy .env.example .env
 
 # Development
 cd C:\apps
 git clone https://github.com/YOUR_USER/BBLM bblm-dev
 cd bblm-dev
 npm install
-copy .env.example .env.development
+copy .env.example .env
 ```
+
+> Each checkout gets its own plain `.env` (not `.env.production`/`.env.staging`) — they're three separate directories, so there's no need for Next.js's environment-suffixed file names. `.env.example` is tracked in the repo as a template; the real `.env` files are gitignored.
 
 ### Run the database migrations for each environment
 
 ```powershell
 # From each app folder, using its own .env file:
 $env:DATABASE_URL="postgresql://bblm_prod_user:password@localhost:5432/bblm_prod"
-npx prisma migrate deploy
-npx prisma db seed   # if you want seed data
+npx prisma migrate deploy   # applies prisma/migrations/ — safe to re-run, no-ops if already applied
+npx prisma db seed          # required — seeds skills/races/player types + the Weather/Casualty/
+                             # Kick-off and Special Play Card reference tables the app depends on.
+                             # This does NOT create any sample league/teams/coaches.
 ```
+
+> For local development only, `npx ts-node prisma/seed-demo.ts` additionally creates a sample
+> league with 3 demo coach accounts — all sharing the password `password123`. **Never run this
+> against staging or production.**
 
 ### Build
 
@@ -147,12 +167,14 @@ npm run build
 
 Each checkout has its own `.env` file. **Never commit these.**
 
+> **Note:** this app does not use NextAuth — it has its own JWT session (`lib/auth.ts`), which
+> reads a single `AUTH_SECRET` variable. There is no `*_URL` variable to set.
+
 ### `C:\apps\bblm-prod\.env`
 
 ```env
 DATABASE_URL="postgresql://bblm_prod_user:STRONG_PASSWORD@localhost:5432/bblm_prod"
-NEXTAUTH_URL="https://bblm.yourdomain.com"
-NEXTAUTH_SECRET="generate-with-openssl-rand-base64-32"
+AUTH_SECRET="generate-with-openssl-rand-base64-32"
 NODE_ENV=production
 PORT=3000
 ```
@@ -161,8 +183,7 @@ PORT=3000
 
 ```env
 DATABASE_URL="postgresql://bblm_staging_user:STRONG_PASSWORD@localhost:5432/bblm_staging"
-NEXTAUTH_URL="https://staging.yourdomain.com"
-NEXTAUTH_SECRET="a-different-secret-here"
+AUTH_SECRET="a-different-secret-here"
 NODE_ENV=production
 PORT=3001
 ```
@@ -171,13 +192,14 @@ PORT=3001
 
 ```env
 DATABASE_URL="postgresql://bblm_dev_user:STRONG_PASSWORD@localhost:5432/bblm_dev"
-NEXTAUTH_URL="https://dev.yourdomain.com"
-NEXTAUTH_SECRET="another-different-secret"
+AUTH_SECRET="another-different-secret"
 NODE_ENV=production
 PORT=3002
 ```
 
 > Generate a secret with PowerShell: `[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Max 256 }))`
+> Use a **different** `AUTH_SECRET` per environment — this signs the session cookie, so sharing
+> one would let a prod session JWT be replayed against staging/dev (and vice versa).
 
 ---
 
@@ -259,12 +281,16 @@ Place `caddy.exe` and a `Caddyfile` in `C:\apps\caddy\`.
 ### `C:\apps\caddy\Caddyfile`
 
 ```
-bblm.yourdomain.com {
+bbgames.dk {
     reverse_proxy localhost:3000
     encode gzip
 }
 
-staging.yourdomain.com {
+www.bbgames.dk {
+    redir https://bbgames.dk{uri} permanent
+}
+
+staging.bbgames.dk {
     # Optional: restrict access to your office/home IP
     # @blocked not remote_ip 1.2.3.4
     # respond @blocked 403
@@ -273,7 +299,7 @@ staging.yourdomain.com {
     encode gzip
 }
 
-dev.yourdomain.com {
+dev.bbgames.dk {
     # Restrict dev to your IP only — no public access
     @allowed remote_ip 1.2.3.4
     reverse_proxy @allowed localhost:3002
@@ -350,11 +376,11 @@ pm2 restart bblm-staging
 [Developer machine] → git push → GitHub
                                    │
                            git pull on dev env
-                           test on dev.yourdomain.com
+                           test on dev.bbgames.dk
                                    │
                         (approved) ▼
                            git pull on staging
-                           test on staging.yourdomain.com
+                           test on staging.bbgames.dk
                                    │
                         (approved) ▼
                            git pull on production
