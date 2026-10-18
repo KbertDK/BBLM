@@ -12,9 +12,9 @@ Internet
     │
     ▼
 [Caddy]  — reverse proxy, auto-HTTPS via Let's Encrypt
-    ├── bbgames.dk               → localhost:3000  (Production)
-    ├── staging.bbgames.dk       → localhost:3001  (Staging)
-    └── dev.bbgames.dk           → localhost:3002  (Development)
+    ├── bbliga.bbgames.dk         → localhost:3000  (Production)
+    ├── bbliga-staging.bbgames.dk → localhost:3001  (Staging)
+    └── bbliga-dev.bbgames.dk     → localhost:3002  (Development)
          │                (dev subdomain can be IP-restricted)
 [PM2]    — three Node.js processes, one per environment
     │
@@ -58,13 +58,12 @@ C:\apps\
 At your domain registrar, add these A records, all pointing to your external IP:
 
 ```
-bbgames.dk              →  YOUR.EXTERNAL.IP   (apex/root domain)
-www.bbgames.dk          →  YOUR.EXTERNAL.IP   (redirects to the apex — see Caddyfile below)
-staging.bbgames.dk      →  YOUR.EXTERNAL.IP
-dev.bbgames.dk          →  YOUR.EXTERNAL.IP
+bbliga.bbgames.dk          →  YOUR.EXTERNAL.IP
+bbliga-staging.bbgames.dk  →  YOUR.EXTERNAL.IP
+bbliga-dev.bbgames.dk      →  YOUR.EXTERNAL.IP
 ```
 
-> Some registrars don't allow a plain A record on the apex and call it something else (e.g. "root" or "@") — point that at the same IP.
+> These are all subdomains of `bbgames.dk` — no change needed to the apex/root domain itself, so whatever else may be running there (or planned for it) is unaffected.
 
 On your router: forward **ports 80 and 443** to the Windows Server's internal IP address. Leave all other ports closed externally.
 
@@ -281,16 +280,12 @@ Place `caddy.exe` and a `Caddyfile` in `C:\apps\caddy\`.
 ### `C:\apps\caddy\Caddyfile`
 
 ```
-bbgames.dk {
+bbliga.bbgames.dk {
     reverse_proxy localhost:3000
     encode gzip
 }
 
-www.bbgames.dk {
-    redir https://bbgames.dk{uri} permanent
-}
-
-staging.bbgames.dk {
+bbliga-staging.bbgames.dk {
     # Optional: restrict access to your office/home IP
     # @blocked not remote_ip 1.2.3.4
     # respond @blocked 403
@@ -299,7 +294,7 @@ staging.bbgames.dk {
     encode gzip
 }
 
-dev.bbgames.dk {
+bbliga-dev.bbgames.dk {
     # Restrict dev to your IP only — no public access
     @allowed remote_ip 1.2.3.4
     reverse_proxy @allowed localhost:3002
@@ -376,11 +371,11 @@ pm2 restart bblm-staging
 [Developer machine] → git push → GitHub
                                    │
                            git pull on dev env
-                           test on dev.bbgames.dk
+                           test on bbliga-dev.bbgames.dk
                                    │
                         (approved) ▼
                            git pull on staging
-                           test on staging.bbgames.dk
+                           test on bbliga-staging.bbgames.dk
                                    │
                         (approved) ▼
                            git pull on production
