@@ -1,4 +1,5 @@
 import { PrismaClient, SkillCategory } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 import { seedMdMatchEvents } from './seed-md-match-events'
 import { seedSpecialPlayCards } from './seed-special-play-cards'
 
@@ -319,6 +320,18 @@ async function main() {
 
   await seedMdMatchEvents(prisma)
   await seedSpecialPlayCards(prisma)
+
+  const adminEmail = 'admin@bbgames.dk'
+  const existingAdmin = await prisma.coach.findUnique({ where: { email: adminEmail } })
+  if (existingAdmin) {
+    console.log('Admin coach already exists — skipping.')
+  } else {
+    const passwordHash = await bcrypt.hash('Admin123', 10)
+    await prisma.coach.create({
+      data: { name: 'Admin', alias: 'Admin', email: adminEmail, passwordHash, role: 'ADMIN' },
+    })
+    console.log(`Seeded Admin coach (log in with ${adminEmail} / Admin123).`)
+  }
 
   console.log('Seed complete. (Sample league/teams/news are not included — run `npx ts-node prisma/seed-demo.ts` for local demo data.)')
 }
