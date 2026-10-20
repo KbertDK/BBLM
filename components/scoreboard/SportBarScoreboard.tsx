@@ -172,8 +172,7 @@ function speakCasualty(detail: string) {
 function playOrganAndSpeak(detail: string) {
   // Synthesise a dramatic diminished organ chord using the Web Audio API
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const AC = (window as any).AudioContext ?? (window as any).webkitAudioContext
+    const AC = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (AC) {
       const ctx: AudioContext = new AC()
       // Two chords: diminished (B2-D3-F3) → resolve down (G2-Bb2-D3)

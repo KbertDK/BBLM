@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
 import { getSession } from '@/lib/auth'
 import { spirallingExpenseFor } from '@/lib/spirallingExpenses'
 import { computePettyCashReturn } from '@/lib/postMatchFinance'
@@ -531,8 +532,7 @@ export async function completeMatchFull(formData: FormData) {
       },
     }),
     ...playerUpdates.map((u) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const data: Record<string, any> = {
+      const data: Prisma.TeamPlayerUpdateInput = {
         touchdowns:     { increment: u.deltaTouchdowns },
         completePasses: { increment: u.deltaCompletePasses },
         interceptions:  { increment: u.deltaInterceptions },
