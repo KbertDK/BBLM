@@ -356,7 +356,10 @@ On your router, **only forward ports 80 and 443** to the server. Do not forward 
 # Example: deploy the main branch to staging
 cd C:\apps\bblm-staging
 git pull origin main
-npm install --omit=dev
+npm install                 # not --omit=dev: tailwindcss/postcss/typescript are
+                             # devDependencies needed by `next build` itself, since
+                             # this builds in place on the server rather than
+                             # deploying a pre-built artifact
 npx prisma migrate deploy   # run any new DB migrations
 npx prisma generate         # regenerate Prisma client
 npm run build
