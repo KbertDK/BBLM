@@ -8,6 +8,7 @@ import { getSession } from '@/lib/auth'
 import { spirallingExpenseFor } from '@/lib/spirallingExpenses'
 import { computePettyCashReturn } from '@/lib/postMatchFinance'
 import { computeTV } from '@/lib/teamValue'
+import { generateMatchRecap } from '@/lib/recap'
 
 async function requireMatchParticipant(matchId: string) {
   const session = await getSession()
@@ -633,6 +634,25 @@ export async function completeMatchFull(formData: FormData) {
       }),
     ])
   }
+
+  // Fire-and-forget: this process stays alive after the request (PM2, not serverless), so the
+  // recap finishes generating in the background without delaying the coach's redirect below.
+  prisma.matchEvent.findMany({ where: { matchId }, orderBy: { createdAt: 'asc' }, select: { label: true } })
+    .then((allEvents) => generateMatchRecap(
+      match.homeTeam.name, match.awayTeam.name, homeScore, awayScore, allEvents.map((e) => e.label),
+    ))
+    .then((recap) => {
+      if (!recap) return
+      return prisma.newsPost.create({
+        data: {
+          title:    `${match.homeTeam.name} ${homeScore} - ${awayScore} ${match.awayTeam.name}`,
+          body:     recap,
+          authorId: session.coachId,
+        },
+      })
+    })
+    .then(() => revalidatePath('/'))
+    .catch((err) => console.error('Match recap generation failed:', err))
 
   revalidatePath('/')
   revalidatePath('/league-management')

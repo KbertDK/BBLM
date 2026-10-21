@@ -176,6 +176,7 @@ DATABASE_URL="postgresql://bblm_prod_user:STRONG_PASSWORD@localhost:5432/bblm_pr
 AUTH_SECRET="generate-with-openssl-rand-base64-32"
 NODE_ENV=production
 PORT=3000
+GEMINI_API_KEY="your-gemini-api-key"
 ```
 
 ### `C:\apps\bblm-staging\.env`
@@ -185,6 +186,7 @@ DATABASE_URL="postgresql://bblm_staging_user:STRONG_PASSWORD@localhost:5432/bblm
 AUTH_SECRET="a-different-secret-here"
 NODE_ENV=production
 PORT=3001
+GEMINI_API_KEY="your-gemini-api-key"
 ```
 
 ### `C:\apps\bblm-dev\.env`
@@ -194,11 +196,16 @@ DATABASE_URL="postgresql://bblm_dev_user:STRONG_PASSWORD@localhost:5432/bblm_dev
 AUTH_SECRET="another-different-secret"
 NODE_ENV=production
 PORT=3002
+GEMINI_API_KEY="your-gemini-api-key"
 ```
 
 > Generate a secret with PowerShell: `[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Max 256 }))`
 > Use a **different** `AUTH_SECRET` per environment — this signs the session cookie, so sharing
 > one would let a prod session JWT be replayed against staging/dev (and vice versa).
+
+> `GEMINI_API_KEY` powers the auto-generated post-match news recap (`lib/recap.ts`). Get a free
+> key at https://aistudio.google.com. It's optional — if unset, match completion just skips
+> generating a recap, with no error shown to coaches.
 
 ---
 
