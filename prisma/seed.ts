@@ -241,34 +241,41 @@ const PLAYER_TYPES: {
   { race: 'Wood Elf',      name: 'Treeman',             maxCount:  1, ma: 2, st: 6, ag: 1, av: 10, skills: ['Loner', 'Mighty Blow', 'Stand Firm', 'Strong Arm', 'Take Root', 'Thick Skull', 'Throw Team-Mate'],              skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 120000 },
 ]
 
+const TIERS: { tier: string; description: string }[] = [
+  { tier: '1',   description: 'Designed to win ~50–55% of games on average.' },
+  { tier: '1.5', description: 'Designed to win ~45–50% of games. Added in LRB6 to be competitive but not dominant.' },
+  { tier: '2',   description: 'Designed to win ~40–45% of games. High skill ceiling.' },
+  { tier: '3',   description: 'Designed to win ~30–35% of games. For experienced coaches seeking a challenge.' },
+]
+
 const RACES = [
-  { name: 'Amazon',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Apes of Wrath',    rosterSource: '3DB',              rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Brettonia',        rosterSource: 'LRB6/NAF extra',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Chaos',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Chaos Dwarf',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Chaos Pact',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Daemons of Khorne',rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Dark Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Dwarf',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Elf / Pro Elf',    rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Goblin',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Halfling',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'High Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Human',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Khemri',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Lizardmen',        rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Necromantic',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Norse',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Nurgle',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Ogre',             rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Orc',              rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Skaven',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Slann',            rosterSource: 'LRB6/NAF extra',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Undead',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Underworld',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Vampire',          rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Wood Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
+  { name: 'Amazon',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Apes of Wrath',    rosterSource: '3DB',              rerollPrice: 60000, hasApothecary: true,  tier: '2'   },
+  { name: 'Brettonia',        rosterSource: 'LRB6/NAF extra',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Chaos',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Chaos Dwarf',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true,  tier: '1'   },
+  { name: 'Chaos Pact',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true,  tier: '1.5' },
+  { name: 'Daemons of Khorne',rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true,  tier: '1'   },
+  { name: 'Dark Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Dwarf',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Elf / Pro Elf',    rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Goblin',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '3'   },
+  { name: 'Halfling',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '3'   },
+  { name: 'High Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Human',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Khemri',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Lizardmen',        rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Necromantic',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Norse',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Nurgle',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Ogre',             rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true,  tier: '3'   },
+  { name: 'Orc',              rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Skaven',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Slann',            rosterSource: 'LRB6/NAF extra',   rerollPrice: 50000, hasApothecary: true,  tier: '1.5' },
+  { name: 'Undead',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Underworld',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true,  tier: '1.5' },
+  { name: 'Vampire',          rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true,  tier: '2'   },
+  { name: 'Wood Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
 ]
 
 async function main() {
@@ -284,7 +291,22 @@ async function main() {
   skillByName['Claw/Claws']      = skillByName['Claws']
   skillByName['Nerves of Steel'] = skillByName['Nerves of Iron']
 
-  await prisma.race.createMany({ data: RACES, skipDuplicates: true })
+  await Promise.all(TIERS.map((t) =>
+    prisma.mdTier.upsert({
+      where:  { tier: t.tier },
+      update: { description: t.description },
+      create: t,
+    })
+  ))
+  console.log(`Seeded ${TIERS.length} tiers.`)
+
+  await Promise.all(RACES.map((r) =>
+    prisma.race.upsert({
+      where:  { name: r.name },
+      update: { tier: r.tier, rosterSource: r.rosterSource, rerollPrice: r.rerollPrice, hasApothecary: r.hasApothecary },
+      create: r,
+    })
+  ))
   const races = await prisma.race.findMany()
   const raceByName = Object.fromEntries(races.map((r) => [r.name, r]))
   raceByName['Elf']       = raceByName['Elf / Pro Elf']

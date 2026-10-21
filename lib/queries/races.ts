@@ -54,7 +54,7 @@ export interface RaceDetail extends RaceSummary {
 export async function getAllRaces(): Promise<RaceSummary[]> {
   const races = await prisma.race.findMany({
     orderBy: { name: 'asc' },
-    include: { _count: { select: { teams: true } } },
+    include: { _count: { select: { teams: true } }, mdTier: true },
   })
   return races.map((r) => ({
     id:              r.id,
@@ -64,7 +64,7 @@ export async function getAllRaces(): Promise<RaceSummary[]> {
     hasApothecary:   r.hasApothecary,
     teamCount:       r._count.teams,
     tier:            r.tier,
-    tierDescription: r.tierDescription,
+    tierDescription: r.mdTier.description,
   }))
 }
 
@@ -73,6 +73,7 @@ export async function getRaceById(id: string): Promise<RaceDetail | null> {
     where: { id },
     include: {
       _count: { select: { teams: true } },
+      mdTier: true,
       playerTypes: {
         orderBy: { cost: 'asc' },
         include: {
@@ -101,7 +102,7 @@ export async function getRaceById(id: string): Promise<RaceDetail | null> {
     hasApothecary:   race.hasApothecary,
     teamCount:       race._count.teams,
     tier:            race.tier,
-    tierDescription: race.tierDescription,
+    tierDescription: race.mdTier.description,
     playerTypes: race.playerTypes.map((p) => ({
       id:              p.id,
       name:            p.name,
