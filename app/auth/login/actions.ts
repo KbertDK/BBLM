@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import prisma from '@/lib/prisma'
-import { createSession, destroySession, verifyPassword } from '@/lib/auth'
+import { createSession, createPendingMfaSession, destroySession, verifyPassword } from '@/lib/auth'
 
 export interface LoginState {
   error: string
@@ -17,7 +17,7 @@ export async function loginAction(
 
   const coach = await prisma.coach.findUnique({
     where:  { email },
-    select: { id: true, name: true, alias: true, email: true, passwordHash: true, role: true, isActive: true },
+    select: { id: true, name: true, alias: true, email: true, passwordHash: true, role: true, isActive: true, mfaEnabled: true },
   })
 
   const invalid = !coach || !coach.passwordHash
@@ -29,6 +29,11 @@ export async function loginAction(
 
   if (!coach.isActive) {
     return { error: 'This account has been deactivated. Contact your league administrator.' }
+  }
+
+  if (coach.mfaEnabled) {
+    await createPendingMfaSession(coach.id)
+    redirect('/auth/mfa')
   }
 
   await createSession({ coachId: coach.id, name: coach.name, alias: coach.alias, email: coach.email, role: coach.role })

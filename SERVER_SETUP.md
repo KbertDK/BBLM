@@ -118,13 +118,41 @@ copy .env.example .env.development
 
 ### Run the database migrations for each environment
 
+Run these from inside each app folder. Prisma reads `DATABASE_URL` from the `.env` file in that
+folder automatically — no need to set it manually.
+
 ```powershell
-# From each app folder, using its own .env file:
-$env:DATABASE_URL="postgresql://bblm_prod_user:password@localhost:5432/bblm_prod"
-npx prisma migrate deploy
-npx prisma db seed   # if you want seed data
+cd C:\apps\bblm-prod
+npx prisma migrate deploy   # applies prisma/migrations/ — safe to re-run, no-ops if already applied
+npx prisma generate         # regenerate Prisma client after migrations
+npx prisma db seed          # required — seeds skills/races/player types + the Weather/Casualty/
+                             # Kick-off and Special Play Card reference tables the app depends on.
+                             # This does NOT create any sample league/teams/coaches.
+
+# Repeat for bblm-staging and bblm-dev
 ```
 
+> For local development only, `npx ts-node prisma/seed-demo.ts` additionally creates a sample
+> league with 3 demo coach accounts — all sharing the password `password123`. **Never run this
+> against staging or production.**
+
+#### If a migration shows as failed
+
+If `prisma migrate deploy` reports a failed migration (P3009 error), check whether any tables
+were created, then resolve it:
+
+```powershell
+# If no tables were created (migration fully failed — try again):
+npx prisma migrate resolve --rolled-back "MIGRATION_NAME"
+npx prisma migrate deploy
+
+# If tables already exist (migration partially succeeded — mark as done):
+npx prisma migrate resolve --applied "MIGRATION_NAME"
+npx prisma migrate deploy
+
+# For dev only — nuclear option, wipes everything and starts fresh:
+npx prisma migrate reset
+```
 ### Build
 
 ```powershell
@@ -179,15 +207,29 @@ PORT=3002
 
 > Generate a secret with PowerShell: `[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Max 256 }))`
 
+> Use a **different** `AUTH_SECRET` per environment — this signs the session cookie, so sharing
+> one would let a prod session JWT be replayed against staging/dev (and vice versa).
+
+> **Note on `PORT`:** The `PORT` variable in `.env` is not used by PM2 on Windows — the port is
+> controlled by the `-p` flag in `ecosystem.config.js` instead. You can leave it in the `.env` for
+> documentation purposes, but it has no effect at runtime.
+
+> `GEMINI_API_KEY` powers the auto-generated post-match news recap (`lib/recap.ts`). Get a free
+> key at https://aistudio.google.com. It's optional — if unset, match completion just skips
+> generating a recap, with no error shown to coaches.
+
 ---
 
 ## 6. PM2 Process Manager
 
-Install PM2 and the Windows service wrapper globally:
+Install PM2 globally:
 
 ```powershell
-npm install -g pm2 pm2-windows-service
+npm install -g pm2
 ```
+
+> **Do not install `pm2-windows-service`.** It is unmaintained and crashes immediately on Node.js 22+.
+> Windows Task Scheduler (section 6b) is used instead to start PM2 on boot.
 
 Create a single PM2 ecosystem config at `C:\apps\ecosystem.config.js`:
 
@@ -197,36 +239,42 @@ module.exports = {
     {
       name: 'bblm-prod',
       cwd: 'C:/apps/bblm-prod',
-      script: 'node_modules/.bin/next',
-      args: 'start',
+      script: 'node_modules/next/dist/bin/next',
+      args: 'start -p 3000',
       env_file: 'C:/apps/bblm-prod/.env',
-      instances: 1,
+      exec_mode: 'fork',
       autorestart: true,
       watch: false,
     },
     {
       name: 'bblm-staging',
       cwd: 'C:/apps/bblm-staging',
-      script: 'node_modules/.bin/next',
-      args: 'start',
+      script: 'node_modules/next/dist/bin/next',
+      args: 'start -p 3001',
       env_file: 'C:/apps/bblm-staging/.env',
-      instances: 1,
+      exec_mode: 'fork',
       autorestart: true,
       watch: false,
     },
     {
       name: 'bblm-dev',
       cwd: 'C:/apps/bblm-dev',
-      script: 'node_modules/.bin/next',
-      args: 'start',
+      script: 'node_modules/next/dist/bin/next',
+      args: 'start -p 3002',
       env_file: 'C:/apps/bblm-dev/.env',
-      instances: 1,
+      exec_mode: 'fork',
       autorestart: true,
       watch: false,
     },
   ],
 }
 ```
+
+> **Windows gotcha:** Do not use `script: 'npm'` or `script: 'node_modules/.bin/next'` on Windows.
+> Both resolve to `.cmd` batch files, which PM2 tries to execute as JavaScript — causing an
+> immediate `SyntaxError: Unexpected token ':'` crash. `node_modules/next/dist/bin/next` is the
+> actual JavaScript entry point and works correctly. The port is passed via `-p` in `args` rather
+> than relying on the `PORT` env var, which PM2 did not reliably forward on Windows.
 
 Start all three and save the process list:
 
@@ -235,10 +283,45 @@ pm2 start C:\apps\ecosystem.config.js
 pm2 save
 ```
 
-Install PM2 as a Windows Service so it survives reboots:
+---
+
+## 6b. Auto-start PM2 on Reboot (Task Scheduler)
+
+Run this once to register a scheduled task that runs `pm2 resurrect` every time Windows starts:
 
 ```powershell
-pm2-service-install
+$node = "C:\Program Files\nodejs\node.exe"
+$pm2  = "C:\Users\Administrator\AppData\Roaming\npm\node_modules\pm2\bin\pm2"
+
+$action = New-ScheduledTaskAction -Execute $node -Argument "$pm2 resurrect"
+
+$trigger = New-ScheduledTaskTrigger -AtStartup
+
+$principal = New-ScheduledTaskPrincipal `
+    -UserId "SYSTEM" `
+    -LogonType ServiceAccount `
+    -RunLevel Highest
+
+Register-ScheduledTask `
+    -TaskName "PM2 Startup" `
+    -Action $action `
+    -Trigger $trigger `
+    -Principal $principal `
+    -Force
+```
+
+Test it without rebooting:
+
+```powershell
+Start-ScheduledTask -TaskName "PM2 Startup"
+Start-Sleep -Seconds 5
+pm2 list   # all three apps should show as online
+```
+
+If you ever need to remove it:
+
+```powershell
+Unregister-ScheduledTask -TaskName "PM2 Startup" -Confirm:$false
 ```
 
 ### Useful PM2 commands
@@ -254,7 +337,41 @@ pm2 stop bblm-dev               # stop dev without removing it
 
 ## 7. Caddy — Reverse Proxy + Automatic HTTPS
 
-Place `caddy.exe` and a `Caddyfile` in `C:\apps\caddy\`.
+### Install Caddy
+
+**Option A — winget (recommended, adds Caddy to PATH system-wide):**
+
+```powershell
+winget install CaddyServer.Caddy
+```
+
+**Option B — Scoop:**
+
+```powershell
+scoop install caddy
+```
+
+**Option C — manual download** (if neither package manager is available):
+
+```powershell
+# Create the folder
+New-Item -ItemType Directory -Force -Path C:\apps\caddy
+
+# Download the latest Windows amd64 binary
+Invoke-WebRequest -Uri "https://caddyserver.com/api/download?os=windows&arch=amd64" `
+    -OutFile "C:\apps\caddy\caddy.exe"
+```
+
+> With winget or Scoop, `caddy` is available everywhere in PowerShell. With the manual download,
+> prefix every command below with `C:\apps\caddy\` or `cd C:\apps\caddy` first.
+
+Create the config folder if it doesn't exist yet:
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\apps\caddy
+```
+
+### `C:\apps\caddy\Caddyfile`
 
 ### `C:\apps\caddy\Caddyfile`
 
@@ -335,10 +452,13 @@ On your router, **only forward ports 80 and 443** to the server. Do not forward 
 # Example: deploy the main branch to staging
 cd C:\apps\bblm-staging
 git pull origin main
-npm install --omit=dev
-npx prisma migrate deploy   # run any new DB migrations
+npm install                 # not --omit=dev: tailwindcss/postcss/typescript are
+                             # devDependencies needed by `next build` itself, since
+                             # this builds in place on the server rather than
+                             # deploying a pre-built artifact
+npx prisma migrate deploy   # apply any new migrations (no-op if none)
 npx prisma generate         # regenerate Prisma client
-npm run build
+npm run build               # compile Next.js — takes 1-2 minutes
 pm2 restart bblm-staging
 ```
 
@@ -414,6 +534,38 @@ pm2 update
 ---
 
 ## 12. Quick Reference
+
+### First admin login
+
+The seed script creates one admin account:
+
+| Field | Value |
+|---|---|
+| Email | `admin@bbgames.dk` |
+| Password | `Admin123` |
+| Role | ADMIN |
+
+**Change this password immediately after first login** via League Management → Coaches.
+
+Additional coaches and admins are created in the app under **League Management → Coaches** once you are logged in as ADMIN.
+
+#### If you are locked out (forgotten admin password)
+
+Generate a new bcrypt hash and update it directly in the database:
+
+```powershell
+# Step 1 — generate a hash for your new password
+cd C:\apps\bblm-prod
+node -e "require('bcryptjs').hash('YourNewPassword', 10, (e,h) => console.log(h))"
+
+# Step 2 — paste the printed hash into this psql command
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -d bblm_prod -c `
+  "UPDATE ""Coach"" SET ""passwordHash"" = 'PASTE_HASH_HERE' WHERE email = 'admin@bbgames.dk';"
+```
+
+---
+
+### Commands
 
 | What | Command |
 |---|---|

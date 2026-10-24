@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { getSession, hashPassword } from '@/lib/auth'
+import { generateResetToken, hashResetToken } from '@/lib/reset-token'
 import { CoachRole } from '@prisma/client'
 
 const REVALIDATE = '/league-management'
@@ -125,5 +126,33 @@ export async function setCoachPrimaryLeague(formData: FormData) {
   const primaryLeagueId = (formData.get('primaryLeagueId') as string) || null
 
   await prisma.coach.update({ where: { id }, data: { primaryLeagueId } })
+  revalidatePath(REVALIDATE)
+}
+
+export async function generateResetLink(
+  _prevState: { url?: string } | null,
+  formData: FormData,
+): Promise<{ url?: string }> {
+  const adminId = await requireAdmin()
+  if (!adminId) return {}
+
+  const id = formData.get('id') as string
+  const token     = generateResetToken()
+  const tokenHash = hashResetToken(token)
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+
+  // Delete any existing unused tokens for this coach first
+  await prisma.passwordResetToken.deleteMany({ where: { coachId: id, usedAt: null } })
+  await prisma.passwordResetToken.create({ data: { coachId: id, tokenHash, expiresAt } })
+
+  return { url: `/auth/reset-password/${token}` }
+}
+
+export async function disableCoachMfa(formData: FormData) {
+  const adminId = await requireAdmin()
+  if (!adminId) return
+
+  const id = formData.get('id') as string
+  await prisma.coach.update({ where: { id }, data: { mfaEnabled: false, mfaSecret: null } })
   revalidatePath(REVALIDATE)
 }

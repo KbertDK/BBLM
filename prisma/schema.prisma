@@ -89,9 +89,22 @@ model Coach {
   phone           String?
   zip             String?
   primaryLeagueId String?
+  mfaSecret       String?
+  mfaEnabled      Boolean    @default(false)
   newsPosts       NewsPost[]
   teams           Team[]
   primaryLeague   League?    @relation("CoachPrimaryLeague", fields: [primaryLeagueId], references: [id], onDelete: SetNull)
+  resetTokens     PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  coachId   String
+  coach     Coach     @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 }
 
 model Race {

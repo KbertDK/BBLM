@@ -19,8 +19,10 @@ import {
 import {
   createCoach, renameCoach, updateCoachEmail, resetCoachPassword,
   toggleCoachActive, deleteCoach, setCoachPrimaryLeague, setCoachRole,
+  disableCoachMfa,
 } from './coach-actions'
 import MatchesTab from './MatchesTab'
+import ResetLinkButton from './ResetLinkButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -904,6 +906,13 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                         <input name="password" type="password" required minLength={6} placeholder="New password (min 6 chars)" className={inputCls('flex-1')} />
                         <button type="submit" className={btnCls('ghost')}>Reset Password</button>
                       </form>
+                      <ResetLinkButton coachId={coach.id} btnCls={btnCls} inputCls={inputCls('flex-1')} />
+                      {coach.mfaEnabled && (
+                        <form action={disableCoachMfa} className="flex gap-1.5">
+                          <input type="hidden" name="id" value={coach.id} />
+                          <button type="submit" className={btnCls('ghost')}>Disable MFA</button>
+                        </form>
+                      )}
                       <form action={setCoachPrimaryLeague} className="flex gap-1.5">
                         <input type="hidden" name="id" value={coach.id} />
                         <select name="primaryLeagueId" defaultValue={coach.primaryLeagueId ?? ''} className={inputCls('flex-1')}>

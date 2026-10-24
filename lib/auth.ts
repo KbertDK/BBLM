@@ -65,3 +65,43 @@ export async function destroySession(): Promise<void> {
   const cookieStore = await cookies()
   cookieStore.delete(COOKIE_NAME)
 }
+
+// ── Pending MFA cookie (short-lived, set after password OK, before TOTP verified) ──
+
+const MFA_COOKIE = 'bb_mfa_pending'
+const MFA_MAX_AGE = 60 * 5 // 5 minutes
+
+export async function createPendingMfaSession(coachId: string): Promise<void> {
+  const token = await new SignJWT({ coachId })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setAudience('mfa-pending')
+    .setIssuedAt()
+    .setExpirationTime('5m')
+    .sign(getSecret())
+
+  const cookieStore = await cookies()
+  cookieStore.set(MFA_COOKIE, token, {
+    httpOnly: true,
+    secure:   process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path:     '/',
+    maxAge:   MFA_MAX_AGE,
+  })
+}
+
+export async function getPendingMfaSession(): Promise<string | null> {
+  try {
+    const cookieStore = await cookies()
+    const token = cookieStore.get(MFA_COOKIE)?.value
+    if (!token) return null
+    const { payload } = await jwtVerify(token, getSecret(), { audience: 'mfa-pending' })
+    return payload['coachId'] as string
+  } catch {
+    return null
+  }
+}
+
+export async function destroyPendingMfaSession(): Promise<void> {
+  const cookieStore = await cookies()
+  cookieStore.delete(MFA_COOKIE)
+}

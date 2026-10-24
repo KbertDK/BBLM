@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { updateProfile } from './actions'
+import ChangePasswordForm from './ChangePasswordForm'
+import MfaSection from './MfaSection'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,7 +42,7 @@ export default async function ProfilePage() {
   const [coach, leagues] = await Promise.all([
     prisma.coach.findUnique({
       where:  { id: session.coachId },
-      select: { name: true, alias: true, email: true, phone: true, address: true, zip: true, city: true, primaryLeagueId: true },
+      select: { name: true, alias: true, email: true, phone: true, address: true, zip: true, city: true, primaryLeagueId: true, mfaEnabled: true },
     }),
     prisma.league.findMany({ where: { isHidden: false }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
   ])
@@ -140,6 +142,15 @@ export default async function ProfilePage() {
             Save Changes
           </button>
         </form>
+
+        {/* Security */}
+        <div className="mt-10 space-y-4">
+          <h2 className="font-heading text-xs font-bold text-bb-muted tracking-widest uppercase">
+            Security
+          </h2>
+          <ChangePasswordForm />
+          <MfaSection mfaEnabled={coach.mfaEnabled} />
+        </div>
 
       </div>
     </div>
