@@ -906,7 +906,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                         <input name="password" type="password" required minLength={6} placeholder="New password (min 6 chars)" className={inputCls('flex-1')} />
                         <button type="submit" className={btnCls('ghost')}>Reset Password</button>
                       </form>
-                      <ResetLinkButton coachId={coach.id} btnCls={btnCls} inputCls={inputCls('flex-1')} />
+                      <ResetLinkButton coachId={coach.id} />
                       {coach.mfaEnabled && (
                         <form action={disableCoachMfa} className="flex gap-1.5">
                           <input type="hidden" name="id" value={coach.id} />
