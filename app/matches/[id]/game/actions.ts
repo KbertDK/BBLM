@@ -509,6 +509,19 @@ export async function completeMatchFull(formData: FormData) {
   })
   const staleMngIds = staleMngPlayers.map((p) => p.id).filter((id) => !newMngIds.has(id))
 
+  // CRP1 post-match fan factor adjustment:
+  // Winner rolls D6 — 4+ means +1 FF. Loser rolls D6 — 1-3 means -1 FF. Draw = no change.
+  const homeFfRoll = Math.floor(Math.random() * 6) + 1
+  const awayFfRoll = Math.floor(Math.random() * 6) + 1
+  const homeFfDelta = homeWin ? (homeFfRoll >= 4 ? 1 : 0)
+                   : awayWin  ? (homeFfRoll <= 3 ? -1 : 0)
+                   : 0
+  const awayFfDelta = awayWin ? (awayFfRoll >= 4 ? 1 : 0)
+                   : homeWin  ? (awayFfRoll <= 3 ? -1 : 0)
+                   : 0
+  const homeFfNew = Math.max(0, Math.min(9, match.homeTeam.fanFactor + homeFfDelta))
+  const awayFfNew = Math.max(0, Math.min(9, match.awayTeam.fanFactor + awayFfDelta))
+
   await prisma.$transaction([
     prisma.match.update({
       where: { id: matchId },
@@ -517,19 +530,21 @@ export async function completeMatchFull(formData: FormData) {
     prisma.team.update({
       where: { id: match.homeTeamId },
       data: {
-        wins:     { increment: homeWin ? 1 : 0 },
-        losses:   { increment: awayWin ? 1 : 0 },
-        draws:    { increment: isDraw  ? 1 : 0 },
-        treasury: { increment: homeWinnings + homePettyCashReturned - homeExpenseClamped },
+        wins:      { increment: homeWin ? 1 : 0 },
+        losses:    { increment: awayWin ? 1 : 0 },
+        draws:     { increment: isDraw  ? 1 : 0 },
+        treasury:  { increment: homeWinnings + homePettyCashReturned - homeExpenseClamped },
+        fanFactor: homeFfNew,
       },
     }),
     prisma.team.update({
       where: { id: match.awayTeamId },
       data: {
-        wins:     { increment: awayWin ? 1 : 0 },
-        losses:   { increment: homeWin ? 1 : 0 },
-        draws:    { increment: isDraw  ? 1 : 0 },
-        treasury: { increment: awayWinnings + awayPettyCashReturned - awayExpenseClamped },
+        wins:      { increment: awayWin ? 1 : 0 },
+        losses:    { increment: homeWin ? 1 : 0 },
+        draws:     { increment: isDraw  ? 1 : 0 },
+        treasury:  { increment: awayWinnings + awayPettyCashReturned - awayExpenseClamped },
+        fanFactor: awayFfNew,
       },
     }),
     ...playerUpdates.map((u) => {
