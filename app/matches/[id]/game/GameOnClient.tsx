@@ -555,8 +555,8 @@ export default function GameOnClient({ matchData }: Props) {
   const [homeWinDie,       setHomeWinDie]       = useState<number | ''>('')
   const [awayWinDie,       setAwayWinDie]       = useState<number | ''>('')
   const [homeWinRerolled,  setHomeWinRerolled]  = useState(false)
-  const [homeFfDie,        setHomeFfDie]        = useState<number | ''>('')
-  const [awayFfDie,        setAwayFfDie]        = useState<number | ''>('')
+  const [homeFfTotal,      setHomeFfTotal]      = useState<number | ''>('')
+  const [awayFfTotal,      setAwayFfTotal]      = useState<number | ''>('')
   const [awayWinRerolled,  setAwayWinRerolled]  = useState(false)
   const [homeFansDie1,   setHomeFansDie1]   = useState<number | ''>('')
   const [homeFansDie2,   setHomeFansDie2]   = useState<number | ''>('')
@@ -766,8 +766,8 @@ export default function GameOnClient({ matchData }: Props) {
       awayScore:    score.away,
       homeWinnings,
       awayWinnings,
-      homeFfDie:    typeof homeFfDie === 'number' ? homeFfDie : null,
-      awayFfDie:    typeof awayFfDie === 'number' ? awayFfDie : null,
+      homeFfTotal:  typeof homeFfTotal === 'number' ? homeFfTotal : null,
+      awayFfTotal:  typeof awayFfTotal === 'number' ? awayFfTotal : null,
       playerUpdates,
       journeymanUpdates,
       mercUpdates,
@@ -3466,48 +3466,50 @@ export default function GameOnClient({ matchData }: Props) {
           <h2 className="font-heading text-base font-bold text-bb-gold mb-1 uppercase tracking-widest">
             📣 Fan Factor Roll
           </h2>
-          {score.home === score.away ? (
-            <p className="text-xs text-bb-muted">Draw — no Fan Factor change for either team.</p>
-          ) : (
-            <>
-              <p className="text-xs text-bb-muted mb-4">CRP1: Winner rolls D6 — 4+ gains +1 FF. Loser rolls D6 — 1–3 loses −1 FF.</p>
-              <div className="grid grid-cols-2 gap-4">
-                {(['home', 'away'] as const).map((side) => {
-                  const team    = side === 'home' ? matchData.homeTeam : matchData.awayTeam
-                  const won     = side === 'home' ? score.home > score.away : score.away > score.home
-                  const ff      = side === 'home' ? matchData.homeTeamFanFactor : matchData.awayTeamFanFactor
-                  const die     = side === 'home' ? homeFfDie : awayFfDie
-                  const setDie  = side === 'home' ? setHomeFfDie : setAwayFfDie
-                  const dieNum  = typeof die === 'number' ? die : null
-                  const gained  = won ? dieNum !== null && dieNum >= 4 : dieNum !== null && dieNum <= 3
-                  const delta   = won ? (gained ? 1 : 0) : (gained ? -1 : 0)
-                  const newFf   = Math.max(0, Math.min(9, ff + delta))
-                  return (
-                    <div key={side}>
-                      <label className="block text-xs text-bb-muted mb-1.5 font-heading uppercase tracking-wider">
-                        {team.name} ({won ? 'Winner' : 'Loser'})
-                      </label>
-                      <div className="flex items-center gap-2 mb-2">
-                        <select value={die} onChange={(e) => setDie(e.target.value ? parseInt(e.target.value, 10) : '')}
-                          className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1 text-xs text-white focus:outline-none focus:border-bb-gold">
-                          <option value="" disabled>D6</option>
-                          {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                        <span className="text-[11px] text-bb-muted">{won ? '4+ = +1 FF' : '1–3 = −1 FF'}</span>
-                      </div>
-                      {dieNum !== null && (
-                        <div className="bg-bb-darker border border-bb-border rounded-sm p-3">
-                          <p className={`text-sm font-heading font-bold ${delta !== 0 ? (delta > 0 ? 'text-green-400' : 'text-bb-crimson-bright') : 'text-bb-muted'}`}>
-                            FF: {ff} → {newFf} {delta > 0 ? '(+1)' : delta < 0 ? '(−1)' : '(no change)'}
-                          </p>
-                        </div>
-                      )}
+          <p className="text-xs text-bb-muted mb-4">CRP1: Winner rolls 3D6, loser/draw teams roll 2D6. Total &gt; FF → +1. Total &lt; FF → −1. Equal → no change.</p>
+          <div className="grid grid-cols-2 gap-4">
+            {(['home', 'away'] as const).map((side) => {
+              const team      = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+              const won       = side === 'home' ? score.home > score.away : score.away > score.home
+              const isDraw    = score.home === score.away
+              const ff        = side === 'home' ? matchData.homeTeamFanFactor : matchData.awayTeamFanFactor
+              const total     = side === 'home' ? homeFfTotal : awayFfTotal
+              const setTotal  = side === 'home' ? setHomeFfTotal : setAwayFfTotal
+              const diceLabel = won ? '3D6' : '2D6'
+              const minVal    = won ? 3 : 2
+              const maxVal    = won ? 18 : 12
+              const totalNum  = typeof total === 'number' ? total : null
+              const delta     = totalNum === null ? null
+                              : won    ? (totalNum > ff ? 1 : 0)
+                              : isDraw ? (totalNum > ff ? 1 : totalNum < ff ? -1 : 0)
+                              :           (totalNum < ff ? -1 : 0)
+              const newFf     = delta === null ? ff : Math.max(0, Math.min(9, ff + delta))
+              return (
+                <div key={side}>
+                  <label className="block text-xs text-bb-muted mb-1.5 font-heading uppercase tracking-wider">
+                    {team.name} ({won ? 'Winner' : isDraw ? 'Draw' : 'Loser'}) — roll {diceLabel}
+                  </label>
+                  <div className="flex items-center gap-2 mb-2">
+                    <input
+                      type="number" min={minVal} max={maxVal}
+                      value={total}
+                      onChange={(e) => setTotal(e.target.value ? parseInt(e.target.value, 10) : '')}
+                      placeholder={diceLabel}
+                      className="bg-bb-darker border border-bb-border rounded-sm px-2 py-1 text-xs text-white w-16 focus:outline-none focus:border-bb-gold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                    <span className="text-[11px] text-bb-muted">vs FF {ff}</span>
+                  </div>
+                  {delta !== null && (
+                    <div className="bg-bb-darker border border-bb-border rounded-sm p-3">
+                      <p className={`text-sm font-heading font-bold ${delta !== 0 ? (delta > 0 ? 'text-green-400' : 'text-bb-crimson-bright') : 'text-bb-muted'}`}>
+                        FF: {ff} → {newFf} {delta > 0 ? '(+1)' : delta < 0 ? '(−1)' : '(no change)'}
+                      </p>
                     </div>
-                  )
-                })}
-              </div>
-            </>
-          )}
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </section>
 
         {/* Player Stats Preview */}
@@ -3560,15 +3562,15 @@ export default function GameOnClient({ matchData }: Props) {
         <div className="flex flex-col items-center gap-2 pb-8">
           <button
             onClick={handleComplete}
-            disabled={isPending || (matchData.homeFame !== null && homeWinDie === '') || (matchData.awayFame !== null && awayWinDie === '') || (score.home !== score.away && (homeFfDie === '' || awayFfDie === ''))}
+            disabled={isPending || (matchData.homeFame !== null && homeWinDie === '') || (matchData.awayFame !== null && awayWinDie === '') || homeFfTotal === '' || awayFfTotal === ''}
             className="px-8 py-4 bg-bb-crimson hover:bg-bb-crimson-bright text-white font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-50 shadow-lg shadow-bb-crimson/20">
             {isPending ? 'Saving…' : '⚔ Complete Match & Save Everything'}
           </button>
           {((matchData.homeFame !== null && homeWinDie === '') || (matchData.awayFame !== null && awayWinDie === '')) && (
             <p className="text-xs text-bb-muted">Enter both teams&rsquo; winnings D6 roll first</p>
           )}
-          {score.home !== score.away && (homeFfDie === '' || awayFfDie === '') && (
-            <p className="text-xs text-bb-muted">Enter both teams&rsquo; Fan Factor D6 roll first</p>
+          {(homeFfTotal === '' || awayFfTotal === '') && (
+            <p className="text-xs text-bb-muted">Enter both teams&rsquo; Fan Factor roll first</p>
           )}
         </div>
       </div>

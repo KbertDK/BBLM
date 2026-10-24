@@ -385,8 +385,8 @@ interface CompletePayload {
   awayScore: number
   homeWinnings: number
   awayWinnings: number
-  homeFfDie: number | null
-  awayFfDie: number | null
+  homeFfTotal: number | null
+  awayFfTotal: number | null
   playerUpdates: PlayerUpdate[]
   journeymanUpdates: JourneymanUpdate[]
   mercUpdates: MercStarUpdate[]
@@ -404,7 +404,7 @@ export async function completeMatchFull(formData: FormData) {
 
   const {
     matchId, homeScore, awayScore, homeWinnings, awayWinnings,
-    homeFfDie = null, awayFfDie = null,
+    homeFfTotal = null, awayFfTotal = null,
     events = [],
     playerUpdates = [], journeymanUpdates = [], mercUpdates = [], starUpdates = [], rosterStatRows = [],
   } = payload
@@ -514,13 +514,22 @@ export async function completeMatchFull(formData: FormData) {
   const staleMngIds = staleMngPlayers.map((p) => p.id).filter((id) => !newMngIds.has(id))
 
   // CRP1 post-match fan factor adjustment using dice rolled by the coaches in the UI.
-  // Winner: 4+ = +1 FF. Loser: 1-3 = -1 FF. Draw: no change.
-  const homeFfDelta = homeWin ? (homeFfDie !== null && homeFfDie >= 4 ? 1 : 0)
-                   : awayWin  ? (homeFfDie !== null && homeFfDie <= 3 ? -1 : 0)
-                   : 0
-  const awayFfDelta = awayWin ? (awayFfDie !== null && awayFfDie >= 4 ? 1 : 0)
-                   : homeWin  ? (awayFfDie !== null && awayFfDie <= 3 ? -1 : 0)
-                   : 0
+  // Winner rolls 3D6: total > FF = +1. Loser rolls 2D6: total < FF = -1.
+  // Draw: both roll 2D6: total > FF = +1, total < FF = -1.
+  const homeFfDelta = homeWin
+    ? (homeFfTotal !== null && homeFfTotal > match.homeTeam.fanFactor ? 1 : 0)
+    : awayWin
+    ? (homeFfTotal !== null && homeFfTotal < match.homeTeam.fanFactor ? -1 : 0)
+    : (homeFfTotal !== null
+        ? homeFfTotal > match.homeTeam.fanFactor ? 1 : homeFfTotal < match.homeTeam.fanFactor ? -1 : 0
+        : 0)
+  const awayFfDelta = awayWin
+    ? (awayFfTotal !== null && awayFfTotal > match.awayTeam.fanFactor ? 1 : 0)
+    : homeWin
+    ? (awayFfTotal !== null && awayFfTotal < match.awayTeam.fanFactor ? -1 : 0)
+    : (awayFfTotal !== null
+        ? awayFfTotal > match.awayTeam.fanFactor ? 1 : awayFfTotal < match.awayTeam.fanFactor ? -1 : 0
+        : 0)
   const homeFfNew = Math.max(0, Math.min(9, match.homeTeam.fanFactor + homeFfDelta))
   const awayFfNew = Math.max(0, Math.min(9, match.awayTeam.fanFactor + awayFfDelta))
 
