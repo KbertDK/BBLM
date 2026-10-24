@@ -166,7 +166,7 @@ export interface SpecialPlayCardSlot {
 
 interface MatchEvent {
   id:             string
-  type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'HALFTIME' | 'CHEF' | 'SENT_OFF' | 'WEATHER' | 'SPECIAL_CARD' | 'KICKOFF'
+  type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'COMPLETION' | 'HALFTIME' | 'CHEF' | 'SENT_OFF' | 'WEATHER' | 'SPECIAL_CARD' | 'KICKOFF'
   turn?:          number        // which turn (1–16) the event occurred on
   // TD
   scoringTeam?:   'home' | 'away'
@@ -198,6 +198,7 @@ type ModalState =
   | { type: 'td';          step: 0 | 1 | 2 | 3; eventTurn: number | null; team: 'home' | 'away' | null; scorerId: string | null; hasPass: boolean; passerId: string | null }
   | { type: 'casualty';    step: 0 | 1 | 2 | 3 | 4 | 5; eventTurn: number | null; attackTeam: 'home' | 'away' | null; attackerId: string | null; victimId: string | null; result: CasualtyResult | null; medical: MedicalOption | null }
   | { type: 'interception'; step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; playerId: string | null }
+  | { type: 'completion';   step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; passerId: string | null }
   | { type: 'inducements' }
   | { type: 'wizard'; step: 0 | 1 | 2 | 3; eventTurn: number | null; side: 'home' | 'away' | null; spell: 'fireball' | 'lightning' | null; victims: { playerId: string; result: CasualtyResult }[]; pendingPlayerId: string | null; pendingResult: CasualtyResult | null }
   | { type: 'sentoff'; step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; playerId: string | null; bribeId: string | null; outcome: 'success' | 'failed' | null }
@@ -337,7 +338,9 @@ function computePlayerUpdates(
     const deltaMVP = mvpSet.has(p.id) ? 1 : 0
 
     const deltaTouchdowns     = isMercOrStar ? 0 : events.filter((e) => e.type === 'TD' && e.scorerId === p.id).length
-    const deltaCompletePasses = isMercOrStar ? 0 : events.filter((e) => e.type === 'TD' && e.passerId === p.id).length
+    const deltaCompletePasses = isMercOrStar ? 0 : events.filter(
+      (e) => (e.type === 'TD' && e.passerId === p.id) || (e.type === 'COMPLETION' && e.passerId === p.id),
+    ).length
     const deltaInterceptions  = isMercOrStar ? 0 : events.filter((e) => e.type === 'INTERCEPTION' && e.interceptorId === p.id).length
     const deltaCasualties     = isMercOrStar ? 0 : events.filter(
       (e) => e.type === 'CASUALTY' && e.attackerId === p.id && e.casualtyResult !== 'KO',
@@ -952,6 +955,16 @@ export default function GameOnClient({ matchData }: Props) {
     const p    = playerById.get(playerId)!
     const team = playerTeam.get(playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
     pushEvent({ id: uid(), type: 'INTERCEPTION', turn: eventTurn, interceptorId: playerId, label: `T${eventTurn} · INT · ${playerLabel(p)} (${team})` })
+    setModal(null)
+  }
+
+  function commitCompletion() {
+    if (modal?.type !== 'completion') return
+    const { passerId, eventTurn, team } = modal
+    if (!passerId || !eventTurn || !team) return
+    const p        = playerById.get(passerId)!
+    const teamName = team === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+    pushEvent({ id: uid(), type: 'COMPLETION', turn: eventTurn, passerId, scoringTeam: team, label: `T${eventTurn} · COMP · ${playerLabel(p)} (${teamName})` })
     setModal(null)
   }
 
@@ -2095,6 +2108,11 @@ export default function GameOnClient({ matchData }: Props) {
               <span className="text-base">🖐</span> Interception
             </button>
 
+            <button onClick={() => setModal({ type: 'completion', step: 0, eventTurn: null, team: null, passerId: null })}
+              className={btnGhost + ' text-left'}>
+              <span className="text-base">🎯</span> Completion
+            </button>
+
             {wizardAvailable && (
               <button onClick={() => setModal({ type: 'wizard', step: 0, eventTurn: null, side: null, spell: null, victims: [], pendingPlayerId: null, pendingResult: null })}
                 className={btnGhost + ' text-left'}>
@@ -2463,6 +2481,60 @@ export default function GameOnClient({ matchData }: Props) {
                 <div className="flex justify-between pt-1">
                   <button onClick={() => setModal({ ...modal, step: 1 })} className={btnGhost}>← Back</button>
                   <button onClick={commitInterception} disabled={!modal.playerId}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Confirm
+                  </button>
+                </div>
+              </>
+            )}
+          </ModalOverlay>
+        )}
+
+        {/* Completion Modal */}
+        {modal?.type === 'completion' && (
+          <ModalOverlay title="Record Completion" onClose={() => setModal(null)}>
+            {modal.step === 0 && (
+              <>
+                <p className="text-bb-muted text-sm">Which turn did the completion happen?</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {(hasHalftime ? [9,10,11,12,13,14,15,16] : [1,2,3,4,5,6,7,8]).map((t) => (
+                    <button key={t} onClick={() => setModal({ ...modal, step: 1, eventTurn: t })}
+                      className="py-2 rounded-sm border border-bb-border text-sm font-heading font-bold text-white hover:border-bb-gold/50 hover:bg-bb-gold/10 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {modal.step === 1 && (
+              <>
+                <p className="text-bb-muted text-sm">Which team made the throw? <span className="text-bb-gold font-heading">T{modal.eventTurn}</span></p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['home', 'away'] as const).map((side) => {
+                    const team = side === 'home' ? matchData.homeTeam : matchData.awayTeam
+                    return (
+                      <button key={side} onClick={() => setModal({ ...modal, step: 2, team: side })}
+                        className="p-4 border border-bb-border rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors text-center">
+                        <div className="font-heading font-bold text-white text-sm">{team.name}</div>
+                        <div className="text-xs text-bb-muted mt-1">{team.raceName}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
+              </>
+            )}
+            {modal.step === 2 && modal.team && (
+              <>
+                <p className="text-bb-muted text-sm">Who threw the ball? <span className="text-bb-gold font-heading">T{modal.eventTurn}</span></p>
+                <SelectPlayer
+                  players={modal.team === 'home' ? homePlaying : awayPlaying}
+                  value={modal.passerId ?? ''}
+                  onChange={(v) => setModal({ ...modal, passerId: v })}
+                />
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 1 })} className={btnGhost}>← Back</button>
+                  <button onClick={commitCompletion} disabled={!modal.passerId}
                     className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
                     Confirm
                   </button>
