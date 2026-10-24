@@ -1,5 +1,7 @@
-import { PrismaClient, MatchStatus, SkillCategory } from '@prisma/client'
+import { PrismaClient, SkillCategory } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { seedMdMatchEvents } from './seed-md-match-events'
+import { seedSpecialPlayCards } from './seed-special-play-cards'
 
 const prisma = new PrismaClient()
 
@@ -239,34 +241,41 @@ const PLAYER_TYPES: {
   { race: 'Wood Elf',      name: 'Treeman',             maxCount:  1, ma: 2, st: 6, ag: 1, av: 10, skills: ['Loner', 'Mighty Blow', 'Stand Firm', 'Strong Arm', 'Take Root', 'Thick Skull', 'Throw Team-Mate'],              skillRollDouble: 'GAP',  skillRollNormal: 'S',    cost: 120000 },
 ]
 
+const TIERS: { tier: string; description: string }[] = [
+  { tier: '1',   description: 'Designed to win ~50–55% of games on average.' },
+  { tier: '1.5', description: 'Designed to win ~45–50% of games. Added in LRB6 to be competitive but not dominant.' },
+  { tier: '2',   description: 'Designed to win ~40–45% of games. High skill ceiling.' },
+  { tier: '3',   description: 'Designed to win ~30–35% of games. For experienced coaches seeking a challenge.' },
+]
+
 const RACES = [
-  { name: 'Amazon',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Apes of Wrath',    rosterSource: '3DB',              rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Brettonia',        rosterSource: 'LRB6/NAF extra',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Chaos',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Chaos Dwarf',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Chaos Pact',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Daemons of Khorne',rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Dark Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Dwarf',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Elf / Pro Elf',    rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Goblin',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Halfling',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'High Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Human',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Khemri',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Lizardmen',        rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Necromantic',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Norse',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Nurgle',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Ogre',             rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Orc',              rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Skaven',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true  },
-  { name: 'Slann',            rosterSource: 'LRB6/NAF extra',   rerollPrice: 50000, hasApothecary: true  },
-  { name: 'Undead',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false },
-  { name: 'Underworld',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Vampire',          rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true  },
-  { name: 'Wood Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true  },
+  { name: 'Amazon',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Apes of Wrath',    rosterSource: '3DB',              rerollPrice: 60000, hasApothecary: true,  tier: '2'   },
+  { name: 'Brettonia',        rosterSource: 'LRB6/NAF extra',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Chaos',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Chaos Dwarf',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true,  tier: '1'   },
+  { name: 'Chaos Pact',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true,  tier: '1.5' },
+  { name: 'Daemons of Khorne',rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true,  tier: '1'   },
+  { name: 'Dark Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Dwarf',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Elf / Pro Elf',    rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Goblin',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '3'   },
+  { name: 'Halfling',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '3'   },
+  { name: 'High Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Human',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
+  { name: 'Khemri',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Lizardmen',        rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Necromantic',      rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Norse',            rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Nurgle',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Ogre',             rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true,  tier: '3'   },
+  { name: 'Orc',              rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Skaven',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 60000, hasApothecary: true,  tier: '1'   },
+  { name: 'Slann',            rosterSource: 'LRB6/NAF extra',   rerollPrice: 50000, hasApothecary: true,  tier: '1.5' },
+  { name: 'Undead',           rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: false, tier: '1'   },
+  { name: 'Underworld',       rosterSource: 'LRB6/NAF extra',   rerollPrice: 70000, hasApothecary: true,  tier: '1.5' },
+  { name: 'Vampire',          rosterSource: 'CRP/LRB6 core',   rerollPrice: 70000, hasApothecary: true,  tier: '2'   },
+  { name: 'Wood Elf',         rosterSource: 'CRP/LRB6 core',   rerollPrice: 50000, hasApothecary: true,  tier: '1'   },
 ]
 
 async function main() {
@@ -282,106 +291,71 @@ async function main() {
   skillByName['Claw/Claws']      = skillByName['Claws']
   skillByName['Nerves of Steel'] = skillByName['Nerves of Iron']
 
-  await prisma.race.createMany({ data: RACES, skipDuplicates: true })
+  await Promise.all(TIERS.map((t) =>
+    prisma.mdTier.upsert({
+      where:  { tier: t.tier },
+      update: { description: t.description },
+      create: t,
+    })
+  ))
+  console.log(`Seeded ${TIERS.length} tiers.`)
+
+  await Promise.all(RACES.map((r) =>
+    prisma.race.upsert({
+      where:  { name: r.name },
+      update: { tier: r.tier, rosterSource: r.rosterSource, rerollPrice: r.rerollPrice, hasApothecary: r.hasApothecary },
+      create: r,
+    })
+  ))
   const races = await prisma.race.findMany()
   const raceByName = Object.fromEntries(races.map((r) => [r.name, r]))
   raceByName['Elf']       = raceByName['Elf / Pro Elf']
   raceByName['Lizardman'] = raceByName['Lizardmen']
 
-  const league = await prisma.league.create({
-    data: { name: 'The Reikland Rumble League' },
-  })
-
-  const season = await prisma.season.create({
-    data: { name: 'Season 1', season: 1, status: 'ACTIVE', leagueId: league.id },
-  })
-
-  await prisma.division.create({
-    data: { name: 'Premier Division', seasonId: season.id },
-  })
-
-  const defaultHash = await bcrypt.hash('password123', 10)
-
-  const [grimtusk, skavenslick, aldric] = await Promise.all([
-    prisma.coach.create({ data: { name: 'Grimtusk Ironjaw',    email: 'grimtusk@greentide.bb', passwordHash: defaultHash, role: 'ADMIN'  } }),
-    prisma.coach.create({ data: { name: 'Skavenslick Ratbane', email: 'slick@ratrunners.bb',   passwordHash: defaultHash, role: 'COMMISH' } }),
-    prisma.coach.create({ data: { name: 'Aldric the Bold',     email: 'aldric@reavers.bb',     passwordHash: defaultHash, role: 'COACH'  } }),
-  ])
-
-  const [greenTide, ratrunners, reavers] = await Promise.all([
-    prisma.team.create({ data: { name: 'Da Green Tide',      raceId: raceByName['Orc'].id,   coachId: grimtusk.id,   leagueId: league.id, wins: 3, draws: 1, losses: 1 } }),
-    prisma.team.create({ data: { name: 'The Ratrunners',     raceId: raceByName['Skaven'].id, coachId: skavenslick.id, leagueId: league.id, wins: 4, draws: 0, losses: 1 } }),
-    prisma.team.create({ data: { name: 'Reikland Reavers',   raceId: raceByName['Human'].id,  coachId: aldric.id,     leagueId: league.id, wins: 2, draws: 2, losses: 1 } }),
-  ])
-
-  const now = new Date()
-  const daysAgo  = (n: number) => new Date(now.getTime() - n * 86400000)
-  const daysFromNow = (n: number) => new Date(now.getTime() + n * 86400000)
-
-  await prisma.match.createMany({
-    data: [
-      { leagueId: league.id, homeTeamId: greenTide.id,  awayTeamId: reavers.id,    scheduledAt: daysAgo(7),      status: MatchStatus.COMPLETED, round: 1, homeScore: 2, awayScore: 1 },
-      { leagueId: league.id, homeTeamId: ratrunners.id, awayTeamId: reavers.id,    scheduledAt: daysAgo(3),      status: MatchStatus.COMPLETED, round: 1, homeScore: 3, awayScore: 0 },
-      { leagueId: league.id, homeTeamId: ratrunners.id, awayTeamId: greenTide.id,  scheduledAt: now,             status: MatchStatus.LIVE,      round: 2, homeScore: 1, awayScore: 1 },
-      { leagueId: league.id, homeTeamId: reavers.id,    awayTeamId: greenTide.id,  scheduledAt: daysFromNow(3),  status: MatchStatus.SCHEDULED, round: 3, homeScore: null, awayScore: null },
-      { leagueId: league.id, homeTeamId: greenTide.id,  awayTeamId: ratrunners.id, scheduledAt: daysFromNow(7),  status: MatchStatus.SCHEDULED, round: 3, homeScore: null, awayScore: null },
-      { leagueId: league.id, homeTeamId: reavers.id,    awayTeamId: ratrunners.id, scheduledAt: daysFromNow(10), status: MatchStatus.SCHEDULED, round: 4, homeScore: null, awayScore: null },
-    ],
-  })
-
-  await prisma.newsPost.createMany({
-    data: [
-      {
-        title: 'Season 1 Kicks Off with Brutal Opening Round',
-        body: "The inaugural season of the Reikland Rumble League exploded onto the pitch with a weekend of savage action that left fans breathless and apothecaries busy. Da Green Tide crushed the Reikland Reavers 2-1 in a match that Commissioner Volkar called 'exactly the kind of carnage we hoped for.' Three players were carted off in stretchers, and the crowd loved every second of it. Grimtusk Ironjaw's boys showed they mean business this season, with their star Blitzer racking up two touchdowns and a casualty in the opening fixture. 'We iz da strongest,' Grimtusk commented after the match, wiping blood — presumably not his own — from his tusks.",
-        authorId: grimtusk.id,
-        createdAt: daysAgo(6),
-      },
-      {
-        title: "Ratrunners' Skavenslick Claims No Foul Play in Last Match",
-        body: "Skaven coach Skavenslick Ratbane has vigorously denied allegations that his team employed illicit tactics during their 3-0 demolition of the Reikland Reavers, despite three separate referee reviews flagging suspicious activity near the opposition dugout. 'We iz fast, yes-yes, but we play clean,' the twitchy coach insisted, his eyes darting nervously. 'Those bites are from... training accidents.' The league has announced a formal inquiry, though Commissioner Volkar privately admitted that the Ratrunners' dominance was 'quite impressive, whatever the method.' The Reavers' coach Aldric the Bold has filed an official protest, calling the match 'an embarrassment to the sport and to human dignity.'",
-        authorId: skavenslick.id,
-        createdAt: daysAgo(2),
-      },
-      {
-        title: 'Rookie Thrower Sets New League Completion Record',
-        body: "Reikland Reavers quarterback Stefan 'Steadyhands' Müller made history last week by setting a new league record for completion percentage in a single half — a feat made all the more remarkable given that his team lost 3-0. 'The boy can throw, no question,' admitted opposing coach Skavenslick. 'We just made sure no one was there to catch it.' Müller, playing only his third professional match, completed 8 of 9 passes for 160 yards before being knocked unconscious in the final quarter. He has been cleared to play in this week's fixture and is reportedly 'excited to get back out there,' which team physicians consider either inspiring or deeply concerning.",
-        authorId: aldric.id,
-        createdAt: daysAgo(1),
-      },
-      {
-        title: 'League Commissioner Announces Playoff Format',
-        body: "Commissioner Volkar Steinhammer unveiled the Reikland Rumble League's playoff structure today, confirming that the top two teams after the regular season will compete in a single-match Grand Final for the coveted Reikland Skull Trophy — a genuine skull, former owner unspecified. 'We want the most violent teams to get the most violent prize,' Steinhammer explained. He also confirmed that the league will introduce a 'Player of the Season' award, judged on a combined score of touchdowns and casualties caused. 'We reward excellence in all its forms,' he noted. The announcement was well received, particularly by Grimtusk Ironjaw, who reportedly began practicing his trophy speech — or, as Orcish linguistics experts noted, his victory roar.",
-        authorId: grimtusk.id,
-        createdAt: daysAgo(0),
-      },
-    ],
-  })
-
-  await Promise.all(PLAYER_TYPES.map((pt) =>
-    prisma.playerType.create({
-      data: {
-        raceId:          raceByName[pt.race].id,
-        name:            pt.name,
-        cost:            pt.cost,
-        maxCount:        pt.maxCount,
-        ma:              pt.ma,
-        st:              pt.st,
-        ag:              pt.ag,
-        av:              pt.av,
-        skillRollDouble: pt.skillRollDouble,
-        skillRollNormal: pt.skillRollNormal,
-        startingSkills: {
-          connect: pt.skills
-            .filter((s) => s !== 'None')
-            .map((s) => ({ id: skillByName[s].id })),
+  const existingPlayerTypes = await prisma.playerType.count()
+  if (existingPlayerTypes > 0) {
+    console.log(`PlayerType already has ${existingPlayerTypes} rows — skipping.`)
+  } else {
+    await Promise.all(PLAYER_TYPES.map((pt) =>
+      prisma.playerType.create({
+        data: {
+          raceId:          raceByName[pt.race].id,
+          name:            pt.name,
+          cost:            pt.cost,
+          maxCount:        pt.maxCount,
+          ma:              pt.ma,
+          st:              pt.st,
+          ag:              pt.ag,
+          av:              pt.av,
+          skillRollDouble: pt.skillRollDouble,
+          skillRollNormal: pt.skillRollNormal,
+          startingSkills: {
+            connect: pt.skills
+              .filter((s) => s !== 'None')
+              .map((s) => ({ id: skillByName[s].id })),
+          },
         },
-      },
-    })
-  ))
-  console.log(`Seeded ${PLAYER_TYPES.length} player types.`)
+      })
+    ))
+    console.log(`Seeded ${PLAYER_TYPES.length} player types.`)
+  }
 
-  console.log('Seed complete.')
+  await seedMdMatchEvents(prisma)
+  await seedSpecialPlayCards(prisma)
+
+  const adminEmail = 'admin@bbgames.dk'
+  const existingAdmin = await prisma.coach.findUnique({ where: { email: adminEmail } })
+  if (existingAdmin) {
+    console.log('Admin coach already exists — skipping.')
+  } else {
+    const passwordHash = await bcrypt.hash('Admin123', 10)
+    await prisma.coach.create({
+      data: { name: 'Admin', alias: 'Admin', email: adminEmail, passwordHash, role: 'ADMIN' },
+    })
+    console.log(`Seeded Admin coach (log in with ${adminEmail} / Admin123).`)
+  }
+
+  console.log('Seed complete. (Sample league/teams/news are not included — run `npx ts-node prisma/seed-demo.ts` for local demo data.)')
 }
 
 main()

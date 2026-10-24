@@ -18,8 +18,8 @@ import { getTeamLogo } from '@/lib/team-logo'
 export const dynamic = 'force-dynamic'
 
 interface Props {
-  params:       { id: string }
-  searchParams?: { err?: string; tab?: string }
+  params:       Promise<{ id: string }>
+  searchParams?: Promise<{ err?: string; tab?: string }>
 }
 
 // ── Colour maps ───────────────────────────────────────────────────────────────
@@ -89,9 +89,11 @@ function RankMedal({ rank }: { rank: number }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default async function TeamPage({ params, searchParams }: Props) {
-  const tab = searchParams?.tab ?? 'roster'
+  const { id } = await params
+  const sp = await searchParams
+  const tab = sp?.tab ?? 'roster'
 
-  const [team, session] = await Promise.all([getTeamById(params.id), getSession()])
+  const [team, session] = await Promise.all([getTeamById(id), getSession()])
   if (!team) notFound()
 
   const isOwner = session?.coachId === team.coachId
@@ -322,7 +324,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
             return (
               <Link
                 key={t}
-                href={`/teams/${team.id}?tab=${t}${t === 'roster' && searchParams?.err ? `&err=${searchParams.err}` : ''}`}
+                href={`/teams/${team.id}?tab=${t}${t === 'roster' && sp?.err ? `&err=${sp.err}` : ''}`}
                 className={`px-5 py-2.5 text-xs font-heading tracking-widest uppercase border-b-2 -mb-px transition-colors ${
                   tab === t
                     ? 'border-bb-gold text-bb-gold'
@@ -338,7 +340,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
         {/* ══ TAB: ROSTER ══════════════════════════════════════════════════════ */}
         {tab === 'roster' && (
           <>
-            {searchParams?.err === 'dup_number' && (
+            {sp?.err === 'dup_number' && (
               <div className="mb-6 px-4 py-3 bg-amber-900/20 border border-amber-700/40 rounded-sm text-amber-300 text-sm">
                 That jersey number is already taken — choose a different one.
               </div>

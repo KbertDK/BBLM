@@ -8,12 +8,12 @@ export const dynamic = 'force-dynamic'
 export default async function NewTeamPage({
   searchParams,
 }: {
-  searchParams: { raceId?: string }
+  searchParams: Promise<{ raceId?: string }>
 }) {
   const session = await getSession()
   if (!session) redirect('/auth/login')
 
-  const raceId = searchParams.raceId
+  const raceId = (await searchParams).raceId
 
   const [races, leaguesRaw, playerTypes] = await Promise.all([
     prisma.race.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true, rerollPrice: true, hasApothecary: true } }),

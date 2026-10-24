@@ -2486,7 +2486,7 @@ export default function GameOnClient({ matchData }: Props) {
             )}
             {modal.step === 1 && (
               <>
-                <p className="text-bb-muted text-sm">Which team's Wizard?</p>
+                <p className="text-bb-muted text-sm">Which team&apos;s Wizard?</p>
                 <div className="grid grid-cols-2 gap-3">
                   {(['home', 'away'] as const).map((side) => {
                     const team      = side === 'home' ? matchData.homeTeam : matchData.awayTeam

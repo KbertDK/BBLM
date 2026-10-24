@@ -114,10 +114,17 @@ model Race {
   rerollPrice     Int
   hasApothecary   Boolean
   tier            String         @default("1")
-  tierDescription String?
+  mdTier          MdTier         @relation(fields: [tier], references: [tier])
   playerTypes     PlayerType[]
   teams           Team[]
   mdStarPlayers   MdStarPlayer[] @relation("StarPlayerToRace")
+}
+
+model MdTier {
+  id          String  @id @default(cuid())
+  tier        String  @unique
+  description String?
+  races       Race[]
 }
 
 model PlayerType {

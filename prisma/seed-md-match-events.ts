@@ -1,8 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 
-const prisma = new PrismaClient()
-
-const events = [
+export const mdMatchEvents = [
   // Apothecary
   { name: 'Apothecary', causesCasualty: false, description: 'Once per match you are allowed to re-roll a casualty roll with your apothecary. You must use the re-rolled result.', dieRoll: null, eventType: 'Apothecary', ssp: null },
 
@@ -85,12 +83,20 @@ const events = [
   { name: 'Blizzard', causesCasualty: false, description: "It's cold and snowing! The ice on the field means that any player attempting to move an extra square will slip and fall on a roll of 1-2, while the snow means that only quick or short passes can be attempted.", dieRoll: 12, eventType: 'Weather', ssp: null },
 ]
 
-async function main() {
-  console.log(`Seeding ${events.length} MdMatchEvent records...`)
-  await prisma.mdMatchEvent.createMany({ data: events })
-  console.log('Done.')
+export async function seedMdMatchEvents(prisma: PrismaClient) {
+  const existing = await prisma.mdMatchEvent.count()
+  if (existing > 0) {
+    console.log(`MdMatchEvent already has ${existing} rows — skipping.`)
+    return
+  }
+  await prisma.mdMatchEvent.createMany({ data: mdMatchEvents })
+  console.log(`Seeded ${mdMatchEvents.length} MdMatchEvent records.`)
 }
 
-main()
-  .catch((e) => { console.error(e); process.exit(1) })
-  .finally(() => prisma.$disconnect())
+// Still runnable standalone: `npx ts-node prisma/seed-md-match-events.ts`
+if (require.main === module) {
+  const prisma = new PrismaClient()
+  seedMdMatchEvents(prisma)
+    .catch((e) => { console.error(e); process.exit(1) })
+    .finally(() => prisma.$disconnect())
+}
