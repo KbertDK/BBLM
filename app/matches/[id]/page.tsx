@@ -233,6 +233,18 @@ export default async function MatchReportPage({ params }: PageProps) {
           </div>
         )}
 
+        {/* Gemini recap article */}
+        {match.newsPost && (
+          <div className="mt-6 bg-bb-dark border border-bb-border rounded-sm p-6">
+            <h2 className="font-heading text-sm font-bold text-bb-gold uppercase tracking-widest mb-4">
+              Press Box
+            </h2>
+            <p className="text-sm text-bb-muted/80 leading-relaxed whitespace-pre-wrap">
+              {match.newsPost.body}
+            </p>
+          </div>
+        )}
+
         {/* Team links */}
         <div className="mt-6 flex gap-3 justify-center text-xs font-heading uppercase tracking-widest">
           <Link href={`/teams/${match.homeTeam.id}`}

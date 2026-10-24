@@ -93,6 +93,7 @@ export async function getMatchReport(matchId: string) {
       journeymen: {
         include: { playerType: { select: { name: true } } },
       },
+      newsPost: { select: { title: true, body: true } },
     },
   })
 }

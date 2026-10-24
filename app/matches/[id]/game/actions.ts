@@ -648,6 +648,7 @@ export async function completeMatchFull(formData: FormData) {
           title:    `${match.homeTeam.name} ${homeScore} - ${awayScore} ${match.awayTeam.name}`,
           body:     recap,
           authorId: session.coachId,
+          matchId,
         },
       })
     })

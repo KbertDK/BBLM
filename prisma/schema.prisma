@@ -278,6 +278,7 @@ model Match {
   inducements       MatchInducement[]
   matchPlayerStats  MatchPlayerStat[]
   specialPlayCards  MatchSpecialPlayCard[]
+  newsPost          NewsPost?
 }
 
 model MdSpecialPlayDeck {
@@ -437,7 +438,9 @@ model NewsPost {
   coachNote String   @default("")
   playerId  String?
   teamId    String?
+  matchId   String?  @unique
   author    Coach    @relation(fields: [authorId], references: [id])
+  match     Match?   @relation(fields: [matchId], references: [id])
 }
 
 enum CoachRole {
