@@ -409,6 +409,20 @@ export async function pickSkill(formData: FormData) {
   const skill = await prisma.skill.findUnique({ where: { id: skillId }, select: { category: true } })
   if (!skill) return
 
+  // Reject if the player already has this skill (starting or previously learned).
+  const existingPlayer = await prisma.teamPlayer.findUnique({
+    where:  { id: roll.teamPlayerId },
+    select: {
+      learnedSkills: { select: { id: true } },
+      playerType:    { select: { startingSkills: { select: { id: true } } } },
+    },
+  })
+  const ownedIds = new Set([
+    ...(existingPlayer?.learnedSkills ?? []).map((s) => s.id),
+    ...(existingPlayer?.playerType.startingSkills ?? []).map((s) => s.id),
+  ])
+  if (ownedIds.has(skillId)) return
+
   // CRP1 Value Modifiers Table: a skill only accessible via a Double roll is worth more.
   const isNormal       = roll.teamPlayer.playerType.skillRollNormal.includes(skill.category)
   const valueIncrease  = isNormal ? VALUE_MODIFIERS.normalSkill : VALUE_MODIFIERS.doubleSkill

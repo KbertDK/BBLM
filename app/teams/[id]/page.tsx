@@ -164,10 +164,10 @@ export default async function TeamPage({ params, searchParams }: Props) {
     }
   }
 
-  function skillsForRoll(skillRollNormal: string, skillRollDouble: string, isDouble: boolean) {
+  function skillsForRoll(skillRollNormal: string, skillRollDouble: string, isDouble: boolean, ownedIds: Set<string>) {
     const categories = new Set(skillRollNormal.split(''))
     if (isDouble) skillRollDouble.split('').forEach((c) => categories.add(c))
-    return allSkills.filter((s) => categories.has(s.category))
+    return allSkills.filter((s) => categories.has(s.category) && !ownedIds.has(s.id))
   }
 
   if (tab === 'news') {
@@ -680,8 +680,12 @@ export default async function TeamPage({ params, searchParams }: Props) {
                                 </details>
                               )}
                               {player.skillRolls.map((roll) => {
-                                const isDouble = roll.die1 === roll.die2
-                                const options  = skillsForRoll(player.playerType.skillRollNormal, player.playerType.skillRollDouble, isDouble)
+                                const isDouble     = roll.die1 === roll.die2
+                                const ownedSkillIds = new Set([
+                                  ...player.playerType.startingSkills.map((s) => s.id),
+                                  ...player.learnedSkills.map((s) => s.id),
+                                ])
+                                const options  = skillsForRoll(player.playerType.skillRollNormal, player.playerType.skillRollDouble, isDouble, ownedSkillIds)
                                 const { statOptions } = improvementOptions(roll.die1, roll.die2)
                                 const statBase: Record<string, number> = {
                                   MA: player.playerType.ma, ST: player.playerType.st, AG: player.playerType.ag, AV: player.playerType.av,

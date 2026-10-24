@@ -49,7 +49,7 @@ export async function getTeamById(id: string) {
             select: {
               name: true, ma: true, st: true, ag: true, av: true, cost: true,
               skillRollNormal: true, skillRollDouble: true,
-              startingSkills: { select: { name: true, category: true, skillRule: true } },
+              startingSkills: { select: { id: true, name: true, category: true, skillRule: true } },
             },
           },
           skillRolls:    { where: { consumed: false }, select: { id: true, die1: true, die2: true } },
