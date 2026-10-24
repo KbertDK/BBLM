@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import prisma from '@/lib/prisma'
 import { getLatestNews } from '@/lib/queries/news'
 import { getUpcomingMatches, getLiveMatches, getLatestResults } from '@/lib/queries/matches'
@@ -66,7 +67,15 @@ export default async function HomePage({
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16 flex flex-col gap-20">
         <MatchesPanel upcoming={upcoming} live={live} results={results} />
-        <NewsSection posts={news} />
+        <div>
+          <NewsSection posts={news} />
+          <div className="flex justify-center mt-6">
+            <Link href="/news"
+              className="px-5 py-2 border border-bb-border text-bb-muted text-xs font-heading uppercase tracking-widest hover:text-bb-gold hover:border-bb-gold/40 rounded-sm transition-colors">
+              News Archive →
+            </Link>
+          </div>
+        </div>
         <TeamQuickAccess teams={myTeams} />
         <SponsorBanner />
       </div>
