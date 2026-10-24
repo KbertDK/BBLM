@@ -109,6 +109,8 @@ export async function getPendingJourneymen(teamId: string) {
       match: {
         select: {
           id: true, round: true,
+          homeTeamId: true,
+          awayTeamId: true,
           homeTeam: { select: { name: true } },
           awayTeam: { select: { name: true } },
         },

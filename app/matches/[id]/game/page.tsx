@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { skillRollsAvailable } from '@/lib/ssp'
 import { computeTV } from '@/lib/teamValue'
+import { getPendingJourneymen } from '@/lib/queries/teams'
 import GameOnClient from './GameOnClient'
 
 interface PageProps {
@@ -139,6 +140,46 @@ export default async function GameOnPage({ params }: PageProps) {
                     <p className="text-xs text-bb-muted">{teamNameById[p.teamId]}</p>
                   </div>
                   <Link href={`/teams/${p.teamId}`}
+                    className="shrink-0 px-3 py-1.5 rounded-sm border border-bb-gold/50 text-bb-gold text-xs font-heading uppercase tracking-wider hover:bg-bb-gold hover:text-bb-dark transition-colors">
+                    Resolve →
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    const [homeJourneymen, awayJourneymen] = await Promise.all([
+      getPendingJourneymen(match.homeTeamId),
+      getPendingJourneymen(match.awayTeamId),
+    ])
+    const pendingJourneymen = [...homeJourneymen, ...awayJourneymen]
+
+    if (pendingJourneymen.length > 0) {
+      const teamsWithPending = [
+        ...new Map(
+          pendingJourneymen.map((j) => {
+            const teamId = j.side === 'home' ? j.match.homeTeamId : j.match.awayTeamId
+            const name   = j.side === 'home' ? j.match.homeTeam.name : j.match.awayTeam.name
+            return [teamId, { teamId, name }]
+          })
+        ).values(),
+      ]
+      return (
+        <div className="min-h-screen bg-bb-darker flex items-center justify-center text-white p-4">
+          <div className="text-center p-8 border border-bb-gold/30 rounded-sm bg-bb-dark max-w-md w-full">
+            <div className="text-4xl mb-4">👥</div>
+            <h1 className="font-heading text-xl font-black text-bb-gold mb-3">Unresolved Journeymen</h1>
+            <p className="text-bb-muted text-sm mb-5">
+              The following teams have journeymen who must be signed or fired before this match can start.
+            </p>
+            <div className="space-y-2 text-left">
+              {teamsWithPending.map(({ teamId, name }) => (
+                <div key={teamId} className="flex items-center justify-between gap-3 bg-bb-darker border border-bb-border rounded-sm px-3 py-2">
+                  <p className="text-sm text-white">{name}</p>
+                  <Link href={`/teams/${teamId}`}
                     className="shrink-0 px-3 py-1.5 rounded-sm border border-bb-gold/50 text-bb-gold text-xs font-heading uppercase tracking-wider hover:bg-bb-gold hover:text-bb-dark transition-colors">
                     Resolve →
                   </Link>
