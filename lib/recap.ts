@@ -1,5 +1,5 @@
 // Confirm this is still a current Gemini flash model at https://ai.google.dev/gemini-api/docs/models
-const GEMINI_MODEL = 'gemini-2.0-flash'
+const GEMINI_MODEL = 'gemini-3.8-flash'
 
 const SYSTEM_INSTRUCTION = `You are a seasoned Blood Bowl pundit crossed with a breathless sky-sports
 football journalist — cynical wit, hard-hitting, treats every match like real sporting drama.

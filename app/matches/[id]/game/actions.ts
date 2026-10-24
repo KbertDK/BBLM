@@ -651,7 +651,6 @@ export async function completeMatchFull(formData: FormData) {
         },
       })
     })
-    .then(() => revalidatePath('/'))
     .catch((err) => console.error('Match recap generation failed:', err))
 
   revalidatePath('/')
