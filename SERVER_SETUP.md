@@ -468,39 +468,109 @@ On your router, **only forward ports 80 and 443** to the server. Do not forward 
 
 ## 9. Deployment Workflow
 
-### Promoting a change to an environment
+### Branch → environment mapping
+
+| Git branch | Server folder | URL | Purpose |
+|---|---|---|---|
+| `dev` | `C:\apps\bblm-dev` | dev.yourdomain.com | Active development, first to receive changes |
+| `staging` | `C:\apps\bblm-staging` | staging.yourdomain.com | Pre-production verification |
+| `main` | `C:\apps\bblm-prod` | yourdomain.com | Live production |
+
+Each server folder tracks its own branch. **New code always enters `dev` first, then promotes to `staging`, then to `main`/production.**
+
+### Step 1 — Push your changes to dev
+
+On your development machine, commit to the `dev` branch and push:
 
 ```powershell
-# Example: deploy the main branch to staging
-cd C:\apps\bblm-staging
-git pull origin main
-npm install                 # not --omit=dev: tailwindcss/postcss/typescript are
-                             # devDependencies needed by `next build` itself, since
-                             # this builds in place on the server rather than
-                             # deploying a pre-built artifact
+git checkout dev
+git add <files>
+git commit -m "describe the change"
+git push origin dev
+```
+
+### Step 2 — Deploy to dev environment (on the server)
+
+```powershell
+cd C:\apps\bblm-dev
+git pull origin dev
+npm install
 npx prisma migrate deploy   # apply any new migrations (no-op if none)
 npx prisma generate         # regenerate Prisma client
-npm run build               # compile Next.js — takes 1-2 minutes
+npm run build
+pm2 restart bblm-dev
+```
+
+Test at **dev.yourdomain.com**. When satisfied, promote to staging.
+
+### Step 3 — Promote to staging (on your machine)
+
+```powershell
+git checkout staging
+git merge dev              # bring all dev changes across
+git push origin staging
+```
+
+Then deploy on the server:
+
+```powershell
+cd C:\apps\bblm-staging
+git pull origin staging
+npm install
+npx prisma migrate deploy
+npx prisma generate
+npm run build
 pm2 restart bblm-staging
 ```
 
-> **Important for team logos:** The `public\team-logos\` folder is inside each app directory and is NOT tracked by git. It is preserved across `git pull` + `npm run build` because neither command touches it. Never `rm -rf` the app folder and re-clone — always pull in place.
+Test at **staging.yourdomain.com**. When approved, promote to production.
 
-### Typical promotion flow
+### Step 4 — Promote to production (on your machine)
+
+```powershell
+git checkout main
+git merge staging          # staging is now the source of truth for what goes live
+git push origin main
+```
+
+Then deploy on the server:
+
+```powershell
+cd C:\apps\bblm-prod
+git pull origin main
+npm install
+npx prisma migrate deploy
+npx prisma generate
+npm run build
+pm2 restart bblm-prod
+```
+
+> **Important for team logos:** The `public\team-logos\` folder is NOT tracked by git and lives only inside each server folder. It survives `git pull` + `npm run build` because neither command touches it. **Never** `rm -rf` an app folder and re-clone — always pull in place or you will lose uploaded logos.
+
+### Promotion flow at a glance
 
 ```
-[Developer machine] → git push → GitHub
-                                   │
-                           git pull on dev env
-                           test on bbliga-dev.bbgames.dk
-                                   │
-                        (approved) ▼
-                           git pull on staging
-                           test on bbliga-staging.bbgames.dk
-                                   │
-                        (approved) ▼
-                           git pull on production
-                           zero-downtime via PM2 restart
+Local machine
+  │  git push origin dev
+  ▼
+GitHub (dev branch)
+  │  git pull origin dev  →  npm install + build  →  pm2 restart bblm-dev
+  ▼
+dev.yourdomain.com  ──── test ────┐
+                                  │ pass
+                             git merge dev → staging
+                             git push origin staging
+                                  │
+                             git pull origin staging  →  build  →  pm2 restart bblm-staging
+                                  ▼
+                        staging.yourdomain.com  ──── approve ────┐
+                                                                  │ pass
+                                                             git merge staging → main
+                                                             git push origin main
+                                                                  │
+                                                             git pull origin main  →  build  →  pm2 restart bblm-prod
+                                                                  ▼
+                                                             yourdomain.com  (production)
 ```
 
 ---
