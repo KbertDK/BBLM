@@ -385,6 +385,8 @@ interface CompletePayload {
   awayScore: number
   homeWinnings: number
   awayWinnings: number
+  homeFfDie: number | null
+  awayFfDie: number | null
   playerUpdates: PlayerUpdate[]
   journeymanUpdates: JourneymanUpdate[]
   mercUpdates: MercStarUpdate[]
@@ -401,7 +403,9 @@ export async function completeMatchFull(formData: FormData) {
   try { payload = JSON.parse(raw) } catch { return }
 
   const {
-    matchId, homeScore, awayScore, homeWinnings, awayWinnings, events = [],
+    matchId, homeScore, awayScore, homeWinnings, awayWinnings,
+    homeFfDie = null, awayFfDie = null,
+    events = [],
     playerUpdates = [], journeymanUpdates = [], mercUpdates = [], starUpdates = [], rosterStatRows = [],
   } = payload
 
@@ -509,15 +513,13 @@ export async function completeMatchFull(formData: FormData) {
   })
   const staleMngIds = staleMngPlayers.map((p) => p.id).filter((id) => !newMngIds.has(id))
 
-  // CRP1 post-match fan factor adjustment:
-  // Winner rolls D6 — 4+ means +1 FF. Loser rolls D6 — 1-3 means -1 FF. Draw = no change.
-  const homeFfRoll = Math.floor(Math.random() * 6) + 1
-  const awayFfRoll = Math.floor(Math.random() * 6) + 1
-  const homeFfDelta = homeWin ? (homeFfRoll >= 4 ? 1 : 0)
-                   : awayWin  ? (homeFfRoll <= 3 ? -1 : 0)
+  // CRP1 post-match fan factor adjustment using dice rolled by the coaches in the UI.
+  // Winner: 4+ = +1 FF. Loser: 1-3 = -1 FF. Draw: no change.
+  const homeFfDelta = homeWin ? (homeFfDie !== null && homeFfDie >= 4 ? 1 : 0)
+                   : awayWin  ? (homeFfDie !== null && homeFfDie <= 3 ? -1 : 0)
                    : 0
-  const awayFfDelta = awayWin ? (awayFfRoll >= 4 ? 1 : 0)
-                   : homeWin  ? (awayFfRoll <= 3 ? -1 : 0)
+  const awayFfDelta = awayWin ? (awayFfDie !== null && awayFfDie >= 4 ? 1 : 0)
+                   : homeWin  ? (awayFfDie !== null && awayFfDie <= 3 ? -1 : 0)
                    : 0
   const homeFfNew = Math.max(0, Math.min(9, match.homeTeam.fanFactor + homeFfDelta))
   const awayFfNew = Math.max(0, Math.min(9, match.awayTeam.fanFactor + awayFfDelta))
