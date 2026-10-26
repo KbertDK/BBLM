@@ -3,13 +3,13 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 const STANDARD_PRIZES = [
-  { name: '1st Place',       type: 'TEAM'   as const, icon: '/prizes/horned-skull.svg' },
-  { name: '2nd Place',       type: 'TEAM'   as const, icon: '/prizes/silver-medal.svg' },
-  { name: '3rd Place',       type: 'TEAM'   as const, icon: '/prizes/bronze-medal.svg' },
-  { name: 'Team Spirit',     type: 'TEAM'   as const, icon: '/prizes/spiked-chalice.svg' },
-  { name: 'Top Scorer',      type: 'PLAYER' as const, icon: '/prizes/golden-elf-spiked-ball.svg' },
-  { name: 'Top Passer',      type: 'PLAYER' as const, icon: '/prizes/golden-quarterback.svg' },
-  { name: 'Top Bone Breaker',type: 'PLAYER' as const, icon: '/prizes/gauntlet-dagger.svg' },
+  { name: '1st Place',       type: 'TEAM'   as const, icon: 'horned-skull' },
+  { name: '2nd Place',       type: 'TEAM'   as const, icon: 'silver-medal' },
+  { name: '3rd Place',       type: 'TEAM'   as const, icon: 'bronze-medal' },
+  { name: 'Team Spirit',     type: 'TEAM'   as const, icon: 'spiked-chalice' },
+  { name: 'Top Scorer',      type: 'PLAYER' as const, icon: 'golden-elf-spiked-ball' },
+  { name: 'Top Passer',      type: 'PLAYER' as const, icon: 'golden-quarterback' },
+  { name: 'Top Bone Breaker',type: 'PLAYER' as const, icon: 'gauntlet-dagger' },
 ]
 
 async function main() {
