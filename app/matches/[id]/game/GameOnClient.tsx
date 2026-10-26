@@ -1160,7 +1160,7 @@ export default function GameOnClient({ matchData }: Props) {
         <div className="bg-bb-dark border-b border-bb-border px-6 py-4">
           <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
           <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Wizard</h1>
-          <div className="flex gap-2 mt-3">
+          <div className="flex flex-wrap gap-2 mt-3">
             {(['weather', 'petty-gold', 'lineup', 'inducements', 'fans'] as const).map((s, i, arr) => (
               <div key={s} className="flex items-center gap-2">
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-heading font-bold border ${
@@ -1232,7 +1232,7 @@ export default function GameOnClient({ matchData }: Props) {
             <p className="text-sm text-bb-muted mb-6">
               Coaches may spend gold from their treasury as Petty Cash before inducements are calculated.
             </p>
-            <div className="grid grid-cols-2 gap-4 flex-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
               {(['home', 'away'] as const).map((side) => {
                 const teamName = side === 'home' ? matchData.homeTeam.name  : matchData.awayTeam.name
                 const tv       = side === 'home' ? matchData.homeTeamValue  : matchData.awayTeamValue
@@ -1503,7 +1503,7 @@ export default function GameOnClient({ matchData }: Props) {
                 </div>
 
                 {/* Pricelist + Basket */}
-                <div className="grid grid-cols-[55%_45%] gap-3 overflow-hidden min-h-[320px]">
+                <div className="grid grid-cols-1 md:grid-cols-[55%_45%] gap-3 overflow-hidden md:min-h-[320px]">
                     {/* Pricelist with Stars / Mercs tabs */}
                     <div className="bg-bb-dark border border-bb-border rounded-sm flex flex-col overflow-hidden">
                       {/* Tabs */}
@@ -2088,7 +2088,7 @@ export default function GameOnClient({ matchData }: Props) {
         </div>
 
         {/* Main area */}
-        <div className="flex-1 grid grid-cols-[280px_1fr] overflow-hidden">
+        <div className="flex-1 flex flex-col md:grid md:grid-cols-[280px_1fr] overflow-hidden">
           {/* Left: action buttons */}
           <div className="border-r border-bb-border p-4 flex flex-col gap-3 overflow-y-auto">
             <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest mb-1">Record Event</p>

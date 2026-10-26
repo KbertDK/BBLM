@@ -124,8 +124,8 @@ export default async function RaceDetailPage({ params }: Props) {
               <p className="text-bb-muted/40 text-xs mt-1">Player type masterdata will appear here automatically once loaded.</p>
             </div>
           ) : (
-            <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-xl shadow-black/50">
-              <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-4 py-3 gap-2">
+            <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-x-auto shadow-xl shadow-black/50">
+              <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-4 py-3 gap-2 min-w-[700px]">
                 <span className="col-span-3">Position</span>
                 <span className="col-span-1 text-center">Qty</span>
                 <span className="col-span-1 text-right">Cost</span>
@@ -138,7 +138,7 @@ export default async function RaceDetailPage({ params }: Props) {
                 <span className="col-span-3">Starting Skills</span>
               </div>
               {race.playerTypes.map((pt, i) => (
-                <div key={pt.id} className={`grid grid-cols-[repeat(14,minmax(0,1fr))] items-start px-4 py-3.5 gap-2 border-b border-bb-border last:border-0 ${i % 2 !== 0 ? 'bg-white/[0.02]' : ''}`}>
+                <div key={pt.id} className={`grid grid-cols-[repeat(14,minmax(0,1fr))] items-start px-4 py-3.5 gap-2 border-b border-bb-border last:border-0 min-w-[700px] ${i % 2 !== 0 ? 'bg-white/[0.02]' : ''}`}>
                   <span className="col-span-3 font-semibold text-sm text-white">{pt.name}</span>
                   <span className="col-span-1 text-center text-sm text-bb-muted">0–{pt.maxCount}</span>
                   <span className="col-span-1 text-right text-sm text-bb-gold font-mono">{pt.cost.toLocaleString()}</span>

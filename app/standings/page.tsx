@@ -82,8 +82,8 @@ function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
   pointsLoss: number
 }) {
   return (
-    <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden">
-      <div className="grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-4 py-2.5 gap-2">
+    <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-x-auto">
+      <div className="grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-4 py-2.5 gap-2 min-w-[560px]">
         <span className="text-center">#</span>
         <span>Team</span>
         <span>Coach</span>
@@ -107,7 +107,7 @@ function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
             key={team.id}
             href={`/teams/${team.id}`}
             className={clsx(
-              'grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] items-center px-4 py-3 gap-2 border-b border-bb-border/60 last:border-0 transition-colors group',
+              'grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] items-center px-4 py-3 gap-2 border-b border-bb-border/60 last:border-0 transition-colors group min-w-[560px]',
               isFirst ? 'hover:bg-bb-gold/8' : 'hover:bg-bb-gold/5',
             )}
           >

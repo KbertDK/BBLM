@@ -258,7 +258,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
         </Link>
 
         {/* ── Team header ── */}
-        <div className="mb-8 flex items-start gap-8">
+        <div className="mb-8 flex flex-col sm:flex-row items-start gap-4 sm:gap-8">
           <div className="flex-1 min-w-0">
             <h1 className="font-heading text-4xl font-black text-bb-gold tracking-widest uppercase mb-3">
               {team.name}
@@ -318,7 +318,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
         </div>
 
         {/* ── Tab navigation ── */}
-        <nav className="flex gap-1.5 mb-8 border-b border-bb-border pb-0">
+        <nav className="flex flex-wrap gap-1.5 mb-8 border-b border-bb-border pb-0">
           {(['roster', 'schedule', 'standing', 'achievements', 'news'] as const).map((t) => {
             const labels = { roster: 'Roster', schedule: 'Schedule', standing: 'Standing', achievements: 'Honours', news: 'Team News' }
             return (
@@ -854,7 +854,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                       <div className="space-y-1">
                         <label className="text-bb-muted text-xs uppercase tracking-widest block">Position</label>
                         <select name="playerTypeId" required
-                          className="bg-bb-darker border border-bb-border text-white text-sm px-3 py-2 rounded-sm focus:outline-none focus:border-bb-gold/60 min-w-[260px]">
+                          className="bg-bb-darker border border-bb-border text-white text-sm px-3 py-2 rounded-sm focus:outline-none focus:border-bb-gold/60 w-full sm:w-auto sm:min-w-[260px]">
                           {playerTypes.map((pt) => {
                             const count = typeCounts.get(pt.id) ?? 0
                             const full  = count >= pt.maxCount
@@ -1142,9 +1142,9 @@ export default async function TeamPage({ params, searchParams }: Props) {
                 <p className="text-bb-muted text-sm italic">No matches scheduled yet.</p>
               </div>
             ) : (
-              <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-lg shadow-black/40">
+              <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-x-auto shadow-lg shadow-black/40">
                 {/* Header */}
-                <div className="grid grid-cols-[48px_1fr_auto_1fr_130px_90px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-5 py-3 gap-3">
+                <div className="grid grid-cols-[48px_1fr_auto_1fr_130px_90px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-5 py-3 gap-3 min-w-[560px]">
                   <span className="text-center">Rnd</span>
                   <span className="text-right">Home</span>
                   <span className="text-center">Score</span>
@@ -1165,7 +1165,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                     return (
                       <div
                         key={m.id}
-                        className={`grid grid-cols-[48px_1fr_auto_1fr_130px_90px] items-center px-5 py-3.5 gap-3 ${
+                        className={`grid grid-cols-[48px_1fr_auto_1fr_130px_90px] items-center px-5 py-3.5 gap-3 min-w-[560px] ${
                           isLive ? 'bg-bb-crimson/5' : myWon ? 'bg-bb-gold/[0.03]' : ''
                         }`}
                       >
@@ -1255,9 +1255,9 @@ export default async function TeamPage({ params, searchParams }: Props) {
                 <p className="text-bb-muted text-sm italic">No teams to show.</p>
               </div>
             ) : (
-              <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-lg shadow-black/40">
+              <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-x-auto shadow-lg shadow-black/40">
                 {/* Header */}
-                <div className="grid grid-cols-[36px_1fr_140px_60px_36px_36px_36px_52px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-5 py-3 gap-2">
+                <div className="grid grid-cols-[36px_1fr_140px_60px_36px_36px_36px_52px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-5 py-3 gap-2 min-w-[560px]">
                   <span className="text-center">#</span>
                   <span>Team</span>
                   <span>Coach</span>
@@ -1277,7 +1277,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                     return (
                       <div
                         key={t.id}
-                        className={`grid grid-cols-[36px_1fr_140px_60px_36px_36px_36px_52px] items-center px-5 py-3.5 gap-2 ${
+                        className={`grid grid-cols-[36px_1fr_140px_60px_36px_36px_36px_52px] items-center px-5 py-3.5 gap-2 min-w-[560px] ${
                           isMe ? 'bg-bb-gold/8 border-l-2 border-bb-gold' : isFirst ? '' : ''
                         }`}
                       >

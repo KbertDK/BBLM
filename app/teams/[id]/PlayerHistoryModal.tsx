@@ -158,7 +158,7 @@ export default function PlayerHistoryModal({
             </div>
 
             {/* Table */}
-            <div className="overflow-y-auto flex-1">
+            <div className="overflow-auto flex-1">
               <table className="w-full text-left border-collapse">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-bb-darker border-b border-bb-border">

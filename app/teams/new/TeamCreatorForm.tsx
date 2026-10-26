@@ -296,9 +296,9 @@ export function TeamCreatorForm({ races, leagues, playerTypes, preselectedRaceId
             </h2>
 
             {/* Player type table */}
-            <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-hidden shadow-xl shadow-black/40">
+            <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-x-auto shadow-xl shadow-black/40">
               {/* Header */}
-              <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto] text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-4 py-3 gap-3">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto] text-xs font-heading tracking-widest uppercase text-bb-muted/60 bg-bb-darker border-b border-bb-border px-4 py-3 gap-3 min-w-[640px]">
                 <span>Position</span>
                 <span className="text-right w-20">Cost</span>
                 <span className="text-center w-8">MA</span>
@@ -321,7 +321,7 @@ export function TeamCreatorForm({ races, leagues, playerTypes, preselectedRaceId
                   return (
                     <div
                       key={pt.id}
-                      className={`grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto] items-center px-4 py-3 gap-3 border-b border-bb-border last:border-0 ${i % 2 !== 0 ? 'bg-white/[0.02]' : ''}`}
+                      className={`grid grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto_auto] items-center px-4 py-3 gap-3 border-b border-bb-border last:border-0 min-w-[640px] ${i % 2 !== 0 ? 'bg-white/[0.02]' : ''}`}
                     >
                       <div className="min-w-0">
                         <div className="font-semibold text-sm text-white leading-tight">{pt.name}</div>

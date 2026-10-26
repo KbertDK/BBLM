@@ -55,7 +55,7 @@ export default async function HomePage({
               <LeagueFilter leagues={leagues} activeId={activeLeagueId} />
             </div>
           )}
-          <h1 className="font-heading text-5xl md:text-7xl font-black text-white mb-4 tracking-tight leading-none">
+          <h1 className="font-heading text-3xl sm:text-5xl md:text-7xl font-black text-white mb-4 tracking-tight leading-none">
             The Reikland<br />
             <span className="text-bb-gold">Rumble League</span>
           </h1>
