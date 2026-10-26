@@ -25,6 +25,8 @@ import MatchesTab from './MatchesTab'
 import PrizesTab from './PrizesTab'
 import type { AwardRow } from './PrizesTab'
 import ResetLinkButton from './ResetLinkButton'
+import TiebreakersConfig from './TiebreakersConfig'
+import { parseTiebreakers } from '@/lib/tiebreakers'
 
 export const dynamic = 'force-dynamic'
 
@@ -510,6 +512,10 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                           </select>
                           <button type="submit" className={btnCls('ghost')}>Set Rule Set</button>
                         </form>
+                        <TiebreakersConfig
+                          leagueId={league.id}
+                          current={parseTiebreakers(league.standingsTiebreakers)}
+                        />
                         <div className="flex gap-2 pt-1 border-t border-bb-border/30">
                           <form action={toggleLeagueVisibility}>
                             <input type="hidden" name="id" value={league.id} />

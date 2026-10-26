@@ -3,6 +3,10 @@ import { redirect } from 'next/navigation'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import clsx from 'clsx'
+import { parseTiebreakers } from '@/lib/tiebreakers'
+import type { TiebreakerKey } from '@/lib/tiebreakers'
+import StandingsTableClient from './StandingsTableClient'
+import type { TeamRowClient } from './StandingsTableClient'
 
 export const revalidate = 60
 
@@ -21,45 +25,34 @@ const SEASON_STATUS_LABEL: Record<string, string> = {
   ENDED:    'Ended',
 }
 
-// Tiebreak: pts → wins → draws → fewest losses
-function sortTeams<T extends { wins: number; draws: number; losses: number }>(
-  teams: T[],
+function sortTeams(
+  teams: TeamRowClient[],
   pw: number, pd: number, pl: number,
-): T[] {
+  tiebreakers: TiebreakerKey[],
+): TeamRowClient[] {
   return [...teams].sort((a, b) => {
     const ptsA = a.wins * pw + a.draws * pd + a.losses * pl
     const ptsB = b.wins * pw + b.draws * pd + b.losses * pl
     if (ptsB !== ptsA) return ptsB - ptsA
-    if (b.wins !== a.wins) return b.wins - a.wins
-    if (b.draws !== a.draws) return b.draws - a.draws
-    return a.losses - b.losses
+
+    for (const tb of tiebreakers) {
+      let diff = 0
+      if (tb === 'WINS')      diff = b.wins - a.wins
+      if (tb === 'DRAWS')     diff = b.draws - a.draws
+      if (tb === 'LOSSES')    diff = a.losses - b.losses
+      if (tb === 'TD_DIFF')   diff = b.tdsDiff - a.tdsDiff
+      if (tb === 'TD_SCORED') diff = b.tdsScored - a.tdsScored
+      if (tb === 'ELO')       diff = b.eloRating - a.eloRating
+      if (diff !== 0) return diff
+    }
+    return 0
   })
-}
-
-function RankMedal({ rank }: { rank: number }) {
-  if (rank === 1) return <span className="font-heading font-black text-bb-gold text-base">1</span>
-  if (rank === 2) return <span className="font-heading font-bold text-slate-300 text-sm">2</span>
-  if (rank === 3) return <span className="font-heading font-bold text-amber-700 text-sm">3</span>
-  return <span className="font-heading text-sm text-bb-muted/40">{rank}</span>
-}
-
-interface TeamRow {
-  id: string
-  name: string
-  race: string
-  coachName: string
-  wins: number
-  draws: number
-  losses: number
-  teamValue: number
-  divisionId: string | null
-  eloRating: number
 }
 
 interface TournamentGroup {
   id: string
   name: string
-  teams: TeamRow[]
+  teams: TeamRowClient[]
 }
 
 interface SeasonBlock {
@@ -72,96 +65,31 @@ interface SeasonBlock {
   pointsWin:    number
   pointsDraw:   number
   pointsLoss:   number
+  tiebreakers:  TiebreakerKey[]
   tournamentGroups: TournamentGroup[]
-  ungroupedTeams:   TeamRow[]
-}
-
-function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
-  teams: TeamRow[]
-  pointsWin: number
-  pointsDraw: number
-  pointsLoss: number
-}) {
-  return (
-    <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-x-auto">
-      <div className="grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px_56px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-4 py-2.5 gap-2 min-w-[640px]">
-        <span className="text-center">#</span>
-        <span>Team</span>
-        <span>Coach</span>
-        <span>Race</span>
-        <span className="text-right" title="Team Value in thousands">TV</span>
-        <span className="text-center">W</span>
-        <span className="text-center">D</span>
-        <span className="text-center">L</span>
-        <span className="text-center">Pts</span>
-        <span className="text-center" title="ELO Rating">ELO</span>
-      </div>
-
-      {teams.length === 0 && (
-        <p className="text-bb-muted/50 text-sm italic px-4 py-4">No teams.</p>
-      )}
-
-      {teams.map((team, i) => {
-        const pts = team.wins * pointsWin + team.draws * pointsDraw + team.losses * pointsLoss
-        const isFirst = i === 0
-        return (
-          <Link
-            key={team.id}
-            href={`/teams/${team.id}`}
-            className={clsx(
-              'grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px_56px] items-center px-4 py-3 gap-2 border-b border-bb-border/60 last:border-0 transition-colors group min-w-[640px]',
-              isFirst ? 'hover:bg-bb-gold/8' : 'hover:bg-bb-gold/5',
-            )}
-          >
-            <div className="text-center"><RankMedal rank={i + 1} /></div>
-            <div className="min-w-0">
-              <span className={clsx(
-                'font-heading font-bold text-sm leading-tight block truncate transition-colors group-hover:text-bb-gold',
-                isFirst ? 'text-white' : 'text-white/85',
-              )}>
-                {team.name}
-              </span>
-            </div>
-            <span className="text-xs text-bb-muted truncate">{team.coachName}</span>
-            <span className="text-xs text-bb-muted/60 truncate">{team.race}</span>
-            <span className="text-right font-heading font-bold text-sm text-bb-gold/80 tabular-nums" title="Team Value">
-              {team.teamValue.toLocaleString()}
-              <span className="text-bb-muted/50 font-normal text-xs ml-0.5">k</span>
-            </span>
-            <span className="text-center text-sm font-semibold text-green-400">{team.wins}</span>
-            <span className="text-center text-sm text-bb-muted">{team.draws}</span>
-            <span className="text-center text-sm text-bb-crimson-bright">{team.losses}</span>
-            <span className={clsx(
-              'text-center font-heading font-black text-base',
-              isFirst ? 'text-bb-gold' : 'text-bb-gold/70',
-            )}>
-              {pts}
-            </span>
-            <span className="text-center text-xs font-heading font-bold text-bb-gold/60 tabular-nums">
-              {Math.round(team.eloRating)}
-            </span>
-          </Link>
-        )
-      })}
-    </div>
-  )
+  ungroupedTeams:   TeamRowClient[]
 }
 
 function StandingsTable({ block }: { block: SeasonBlock }) {
-  const { pointsWin, pointsDraw, pointsLoss, tournamentGroups, ungroupedTeams } = block
+  const { pointsWin, pointsDraw, pointsLoss, tiebreakers, tournamentGroups, ungroupedTeams } = block
   const hasGroups = tournamentGroups.length > 0
 
   return (
     <div className="flex flex-col gap-4">
       {tournamentGroups.map((group) => {
-        const sorted = sortTeams(group.teams, pointsWin, pointsDraw, pointsLoss)
+        const sorted = sortTeams(group.teams, pointsWin, pointsDraw, pointsLoss, tiebreakers)
         return (
           <div key={group.id}>
             <div className="flex items-center gap-3 mb-2">
               <span className="text-xs font-heading tracking-widest uppercase text-bb-gold/70">{group.name}</span>
               <div className="flex-1 h-px bg-bb-border/60" />
             </div>
-            <TeamTable teams={sorted} pointsWin={pointsWin} pointsDraw={pointsDraw} pointsLoss={pointsLoss} />
+            <StandingsTableClient
+              teams={sorted}
+              pointsWin={pointsWin}
+              pointsDraw={pointsDraw}
+              pointsLoss={pointsLoss}
+            />
             <p className="text-[10px] text-bb-muted/40 mt-1.5 text-right font-heading tracking-wide">
               W={pointsWin} · D={pointsDraw} · L={pointsLoss} pts
             </p>
@@ -177,8 +105,8 @@ function StandingsTable({ block }: { block: SeasonBlock }) {
               <div className="flex-1 h-px bg-bb-border/60" />
             </div>
           )}
-          <TeamTable
-            teams={sortTeams(ungroupedTeams, pointsWin, pointsDraw, pointsLoss)}
+          <StandingsTableClient
+            teams={sortTeams(ungroupedTeams, pointsWin, pointsDraw, pointsLoss, tiebreakers)}
             pointsWin={pointsWin}
             pointsDraw={pointsDraw}
             pointsLoss={pointsLoss}
@@ -209,12 +137,13 @@ export default async function StandingsPage({ searchParams }: Props) {
     }
   }
 
-  // Load all leagues (for the filter pill list)
+  // Load all leagues (for the filter pill list + tiebreaker config)
   const allLeagues = await prisma.league.findMany({
     where:   { isHidden: false },
     orderBy: { name: 'asc' },
     select:  {
       id: true, name: true,
+      standingsTiebreakers: true,
       ruleSet: { select: { pointsWin: true, pointsDraw: true, pointsLoss: true } },
       seasons: {
         select: { id: true, name: true, season: true, status: true },
@@ -231,7 +160,7 @@ export default async function StandingsPage({ searchParams }: Props) {
   const activeSeasons = allSeasons.filter((s) => s.status === 'ACTIVE' || s.status === 'READY')
   const endedSeasons  = allSeasons.filter((s) => s.status === 'ENDED')
 
-  // Seasons to display: if specific seasonId → just that one; if leagueId → all active seasons in that league; else all active
+  // Seasons to display
   const targetSeasons = seasonId
     ? allSeasons.filter((s) => s.id === seasonId)
     : leagueId
@@ -266,6 +195,14 @@ export default async function StandingsPage({ searchParams }: Props) {
         where:  { status: { in: ['ACTIVE', 'MNG'] } },
         select: { value: true, playerType: { select: { cost: true } } },
       },
+      homeMatches: {
+        where:  { status: 'COMPLETED', ...(targetSeasonIds.length > 0 ? { seasonId: { in: targetSeasonIds } } : {}) },
+        select: { homeScore: true, awayScore: true },
+      },
+      awayMatches: {
+        where:  { status: 'COMPLETED', ...(targetSeasonIds.length > 0 ? { seasonId: { in: targetSeasonIds } } : {}) },
+        select: { homeScore: true, awayScore: true },
+      },
     },
     orderBy: { name: 'asc' },
   })
@@ -279,7 +216,9 @@ export default async function StandingsPage({ searchParams }: Props) {
 
   const seasonBlocks: SeasonBlock[] = targetSeasons.map((season) => {
     const league = allLeagues.find((l) => l.id === season.leagueId)!
-    const seasonTeams: TeamRow[] = teams
+    const tiebreakers = parseTiebreakers(league.standingsTiebreakers)
+
+    const seasonTeams: TeamRowClient[] = teams
       .filter((t) => t.leagueId === season.leagueId)
       .map((t) => {
         const playerValue = t.players.reduce((s, p) => s + (p.value > 0 ? p.value : p.playerType.cost), 0)
@@ -292,17 +231,26 @@ export default async function StandingsPage({ searchParams }: Props) {
             + (t.apothecary      ? 50000 : 0)
           ) / 1000
         )
+
+        const tdsScored   = t.homeMatches.reduce((s, m) => s + (m.homeScore ?? 0), 0)
+                          + t.awayMatches.reduce((s, m) => s + (m.awayScore ?? 0), 0)
+        const tdsConceded = t.homeMatches.reduce((s, m) => s + (m.awayScore ?? 0), 0)
+                          + t.awayMatches.reduce((s, m) => s + (m.homeScore ?? 0), 0)
+
         return {
-          id:         t.id,
-          name:       t.name,
-          race:       t.race.name,
-          coachName:  t.coach.alias ?? t.coach.name,
-          wins:       t.wins,
-          draws:      t.draws,
-          losses:     t.losses,
+          id:          t.id,
+          name:        t.name,
+          race:        t.race.name,
+          coachName:   t.coach.alias ?? t.coach.name,
+          wins:        t.wins,
+          draws:       t.draws,
+          losses:      t.losses,
           teamValue,
-          divisionId: t.divisionId,
-          eloRating:  t.eloRating,
+          divisionId:  t.divisionId,
+          eloRating:   t.eloRating,
+          tdsScored,
+          tdsConceded,
+          tdsDiff:     tdsScored - tdsConceded,
         }
       })
 
@@ -336,6 +284,7 @@ export default async function StandingsPage({ searchParams }: Props) {
       pointsWin:  league.ruleSet?.pointsWin  ?? 3,
       pointsDraw: league.ruleSet?.pointsDraw ?? 1,
       pointsLoss: league.ruleSet?.pointsLoss ?? 0,
+      tiebreakers,
       tournamentGroups,
       ungroupedTeams,
     }

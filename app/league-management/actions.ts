@@ -3,10 +3,23 @@
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { SeasonStatus } from '@prisma/client'
+import { TIEBREAKER_KEYS } from '@/lib/tiebreakers'
 
 const REVALIDATE = '/league-management'
 
 // ── Leagues ─────────────────────────────────────────────────────────────────
+
+export async function updateLeagueTiebreakers(leagueId: string, tiebreakers: string[]) {
+  const valid = tiebreakers.filter((k): k is typeof TIEBREAKER_KEYS[number] =>
+    (TIEBREAKER_KEYS as readonly string[]).includes(k)
+  )
+  await prisma.league.update({
+    where: { id: leagueId },
+    data:  { standingsTiebreakers: JSON.stringify(valid) },
+  })
+  revalidatePath('/standings')
+  revalidatePath(REVALIDATE)
+}
 
 export async function createLeague(formData: FormData) {
   const name = (formData.get('name') as string).trim()

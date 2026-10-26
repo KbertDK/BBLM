@@ -31,16 +31,17 @@ model SpirallingExpenseTier {
 }
 
 model League {
-  id             String    @id @default(cuid())
-  name           String
-  isHidden       Boolean   @default(false)
-  createdAt      DateTime  @default(now())
-  ruleSetId      String?
-  ruleSet        RuleSet?  @relation(fields: [ruleSetId], references: [id])
-  matches        Match[]
-  teams          Team[]
-  seasons        Season[]
-  primaryCoaches Coach[]   @relation("CoachPrimaryLeague")
+  id                   String    @id @default(cuid())
+  name                 String
+  isHidden             Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  ruleSetId            String?
+  standingsTiebreakers String?
+  ruleSet              RuleSet?  @relation(fields: [ruleSetId], references: [id])
+  matches              Match[]
+  teams                Team[]
+  seasons              Season[]
+  primaryCoaches       Coach[]   @relation("CoachPrimaryLeague")
 }
 
 model Season {
