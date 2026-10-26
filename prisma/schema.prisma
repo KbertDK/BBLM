@@ -93,10 +93,7 @@ model Coach {
   primaryLeagueId String?
   mfaSecret       String?
   mfaEnabled      Boolean    @default(false)
-<<<<<<< Updated upstream
   eloRating       Float      @default(1500)
-=======
->>>>>>> Stashed changes
   newsPosts       NewsPost[]
   teams           Team[]
   primaryLeague   League?    @relation("CoachPrimaryLeague", fields: [primaryLeagueId], references: [id], onDelete: SetNull)

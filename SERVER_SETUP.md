@@ -166,10 +166,6 @@ npx prisma migrate deploy
 # For dev only — nuclear option, wipes everything and starts fresh:
 npx prisma migrate reset
 ```
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
 ### Build
 
 ```powershell
@@ -491,7 +487,6 @@ Each server folder tracks its own branch. **New code always enters `dev` first, 
 On your development machine, commit to the `dev` branch and push:
 
 ```powershell
-<<<<<<< Updated upstream
 git checkout dev
 git add <files>
 git commit -m "describe the change"
@@ -529,18 +524,6 @@ npm install
 npx prisma migrate deploy
 npx prisma generate
 npm run build
-=======
-# Example: deploy the main branch to staging
-cd C:\apps\bblm-staging
-git pull origin main
-npm install                 # not --omit=dev: tailwindcss/postcss/typescript are
-                             # devDependencies needed by `next build` itself, since
-                             # this builds in place on the server rather than
-                             # deploying a pre-built artifact
-npx prisma migrate deploy   # apply any new migrations (no-op if none)
-npx prisma generate         # regenerate Prisma client
-npm run build               # compile Next.js — takes 1-2 minutes
->>>>>>> Stashed changes
 pm2 restart bblm-staging
 ```
 
