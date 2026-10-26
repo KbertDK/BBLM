@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <clipPath id="hornClip">
+      <path d="M104 180 C100 140 118 100 188 44 C152 96 148 140 154 180 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M104 180 C100 140 118 100 188 44 C152 96 148 140 154 180 Z" fill="rgb(217, 220, 225)"/>
+  <g clip-path="url(#hornClip)">
+    <path d="M136 40 L200 40 L200 190 L150 190 C146 140 152 100 200 40 Z" fill="rgb(142, 148, 156)" opacity="0.55"/>
+    <path d="M90 166 L180 154" stroke="rgb(224, 168, 58)" stroke-width="9" fill="none"/>
+    <path d="M96 130 L186 112" stroke="rgb(224, 168, 58)" stroke-width="7" fill="none"/>
+    <path d="M110 98 L190 74" stroke="rgb(224, 168, 58)" stroke-width="5" fill="none"/>
+  </g>
+  <path d="M109 174 C107 140 122 104 178 54" stroke="rgb(255, 255, 255)" stroke-width="3" fill="none" opacity="0.6" stroke-linecap="round"/>
+  <path d="M92 190 L72 180 L94 182 Z" fill="rgb(163, 168, 176)"/>
+  <path d="M164 190 L184 180 L162 182 Z" fill="rgb(163, 168, 176)"/>
+  <rect x="98" y="176" width="60" height="10" rx="3" fill="rgb(224, 168, 58)"/>
+  <rect x="88" y="186" width="80" height="14" rx="4" fill="rgb(163, 168, 176)"/>
+  <rect x="76" y="198" width="104" height="22" rx="6" fill="rgb(94, 99, 107)"/>
+  <rect x="84" y="203" width="88" height="3" rx="1.5" fill="rgb(255, 255, 255)" opacity="0.18"/>
+</svg>

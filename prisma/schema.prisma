@@ -67,12 +67,13 @@ model Division {
 }
 
 model Tournament {
-  id            String     @id @default(cuid())
+  id            String       @id @default(cuid())
   name          String
-  crossDivision Boolean    @default(false)
-  createdAt     DateTime   @default(now())
-  divisions     Division[] @relation("DivisionToTournament")
+  crossDivision Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  divisions     Division[]   @relation("DivisionToTournament")
   matches       Match[]
+  prizeAwards   PrizeAward[]
 }
 
 model Coach {
@@ -184,6 +185,7 @@ model Team {
   league           League       @relation(fields: [leagueId], references: [id])
   race             Race         @relation(fields: [raceId], references: [id])
   players          TeamPlayer[]
+  prizeAwards      PrizeAward[]
 }
 
 model TeamPlayer {
@@ -212,6 +214,7 @@ model TeamPlayer {
   skillRolls      SkillRoll[]
   learnedSkills   Skill[]      @relation("TeamPlayerLearnedSkill")
   matchStats      MatchPlayerStat[]
+  prizeAwards     PrizeAward[]
 }
 
 model MatchPlayerStat {
@@ -487,4 +490,37 @@ enum MatchStatus {
   SCHEDULED
   LIVE
   COMPLETED
+}
+
+enum PrizeTargetType {
+  TEAM
+  PLAYER
+}
+
+enum PrizeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model PrizeType {
+  id        String          @id @default(cuid())
+  name      String
+  type      PrizeTargetType
+  status    PrizeStatus     @default(ACTIVE)
+  icon      String          @default("")
+  createdAt DateTime        @default(now())
+  awards    PrizeAward[]
+}
+
+model PrizeAward {
+  id           String      @id @default(cuid())
+  prizeTypeId  String
+  tournamentId String
+  teamId       String?
+  teamPlayerId String?
+  createdAt    DateTime    @default(now())
+  prizeType    PrizeType   @relation(fields: [prizeTypeId], references: [id])
+  tournament   Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team         Team?       @relation(fields: [teamId], references: [id])
+  teamPlayer   TeamPlayer? @relation(fields: [teamPlayerId], references: [id])
 }

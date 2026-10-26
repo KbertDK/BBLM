@@ -22,6 +22,8 @@ import {
   disableCoachMfa,
 } from './coach-actions'
 import MatchesTab from './MatchesTab'
+import PrizesTab from './PrizesTab'
+import type { AwardRow } from './PrizesTab'
 import ResetLinkButton from './ResetLinkButton'
 
 export const dynamic = 'force-dynamic'
@@ -166,6 +168,48 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
     ? await prisma.coach.findMany({ orderBy: { name: 'asc' }, include: { _count: { select: { teams: true } } } })
     : []
 
+  // Prizes tab — fetch when needed
+  let prizeTypes: { id: string; name: string; type: 'TEAM'|'PLAYER'; status: 'ACTIVE'|'INACTIVE'; icon: string }[] = []
+  let prizeAwards: AwardRow[] = []
+  let prizeTournaments: { id: string; name: string; divisionIds: string[] }[] = []
+  let prizeTeams: { id: string; name: string; divisionId: string|null; players: { id: string; name: string|null; playerType: { name: string } }[] }[] = []
+
+  if (tab === 'prizes') {
+    ;[prizeTypes, prizeAwards, prizeTournaments, prizeTeams] = await Promise.all([
+      prisma.prizeType.findMany({ orderBy: { createdAt: 'asc' } }) as Promise<{ id: string; name: string; type: 'TEAM'|'PLAYER'; status: 'ACTIVE'|'INACTIVE'; icon: string }[]>,
+      prisma.prizeAward.findMany({
+        include: {
+          team:       { select: { name: true } },
+          teamPlayer: { select: { name: true, playerType: { select: { name: true } } } },
+        },
+      }).then((rows) => rows.map((r) => ({
+        id:           r.id,
+        prizeTypeId:  r.prizeTypeId,
+        tournamentId: r.tournamentId,
+        teamId:       r.teamId,
+        teamPlayerId: r.teamPlayerId,
+        teamName:     r.team?.name ?? null,
+        playerName:   r.teamPlayer?.name ?? null,
+        playerRole:   r.teamPlayer?.playerType?.name ?? null,
+      }))),
+      prisma.tournament.findMany({
+        orderBy: { name: 'asc' },
+        include: { divisions: { select: { id: true } } },
+      }).then((rows) => rows.map((t) => ({ id: t.id, name: t.name, divisionIds: t.divisions.map((d) => d.id) }))),
+      prisma.team.findMany({
+        where:   { isActive: true },
+        select: {
+          id: true, name: true, divisionId: true,
+          players: {
+            where:  { status: 'ACTIVE' },
+            select: { id: true, name: true, playerType: { select: { name: true } } },
+          },
+        },
+        orderBy: { name: 'asc' },
+      }),
+    ])
+  }
+
   // Matches tab — only fetch when needed
   let leagueMatches: Awaited<ReturnType<typeof getMatchesByLeague>> = []
   let leagueTeams: { id: string; name: string; divisionId: string | null; division: { id: string; name: string } | null }[] = []
@@ -218,9 +262,12 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
     awayScore:            m.awayScore,
   }))
 
+  const isCommish = session?.role === 'COMMISH' || session?.role === 'ADMIN'
+
   const tabItems = [
     { value: 'leagues', label: 'Leagues & Seasons' },
     { value: 'matches', label: 'Matches & Schedule' },
+    ...(isCommish ? [{ value: 'prizes', label: 'Prizes' }] : []),
     ...(isAdmin ? [{ value: 'users', label: 'Users' }] : []),
   ]
 
@@ -817,7 +864,19 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
           </section>
         )}
 
-        {/* ── Tab 3: Users (admin only) ── */}
+        {/* ── Tab 3: Prizes ── */}
+        {isCommish && tab === 'prizes' && (
+          <section>
+            <PrizesTab
+              prizeTypes={prizeTypes}
+              tournaments={prizeTournaments}
+              teams={prizeTeams}
+              awards={prizeAwards}
+            />
+          </section>
+        )}
+
+        {/* ── Tab 4: Users (admin only) ── */}
         {isAdmin && tab === 'users' && (
           <section>
             <SectionHeading title="Users" />
