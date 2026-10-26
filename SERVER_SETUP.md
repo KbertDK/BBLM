@@ -166,6 +166,10 @@ npx prisma migrate deploy
 # For dev only — nuclear option, wipes everything and starts fresh:
 npx prisma migrate reset
 ```
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 ### Build
 
 ```powershell
@@ -224,6 +228,10 @@ GEMINI_API_KEY="your-gemini-api-key"
 > Generate a secret with PowerShell: `[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Max 256 }))`
 > Use a **different** `AUTH_SECRET` per environment — this signs the session cookie, so sharing
 > one would let a prod session JWT be replayed against staging/dev (and vice versa).
+
+> **Note on `PORT`:** The `PORT` variable in `.env` is not used by PM2 on Windows — the port is
+> controlled by the `-p` flag in `ecosystem.config.js` instead. You can leave it in the `.env` for
+> documentation purposes, but it has no effect at runtime.
 
 > `GEMINI_API_KEY` powers the auto-generated post-match news recap (`lib/recap.ts`). Get a free
 > key at https://aistudio.google.com. It's optional — if unset, match completion just skips
@@ -483,6 +491,7 @@ Each server folder tracks its own branch. **New code always enters `dev` first, 
 On your development machine, commit to the `dev` branch and push:
 
 ```powershell
+<<<<<<< Updated upstream
 git checkout dev
 git add <files>
 git commit -m "describe the change"
@@ -520,6 +529,18 @@ npm install
 npx prisma migrate deploy
 npx prisma generate
 npm run build
+=======
+# Example: deploy the main branch to staging
+cd C:\apps\bblm-staging
+git pull origin main
+npm install                 # not --omit=dev: tailwindcss/postcss/typescript are
+                             # devDependencies needed by `next build` itself, since
+                             # this builds in place on the server rather than
+                             # deploying a pre-built artifact
+npx prisma migrate deploy   # apply any new migrations (no-op if none)
+npx prisma generate         # regenerate Prisma client
+npm run build               # compile Next.js — takes 1-2 minutes
+>>>>>>> Stashed changes
 pm2 restart bblm-staging
 ```
 
