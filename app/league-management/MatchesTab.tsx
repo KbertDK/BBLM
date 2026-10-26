@@ -9,7 +9,7 @@ import {
 } from 'date-fns'
 import {
   createMatch, deleteMatch, setMatchLive, completeMatch,
-  generateRoundRobin, bulkSetMatchDates, setMatchDate,
+  generateRoundRobin, generateSwissRound, bulkSetMatchDates, setMatchDate,
 } from './match-actions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -415,6 +415,43 @@ export default function MatchesTab({
                       />
                     </div>
                     <button type="submit" className={btnCls('primary')}>Generate matches</button>
+                  </div>
+                </>
+              )}
+            </form>
+          </details>
+
+          {/* Swiss round generator */}
+          <details className="group bg-bb-dark border border-bb-border rounded-sm">
+            <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer [list-style:none] [&::-webkit-details-marker]:hidden hover:bg-bb-darker/40 transition-colors select-none">
+              <Chevron cls="text-bb-muted" />
+              <span className="text-bb-gold text-xs font-medium uppercase tracking-widest">Generate Swiss Round</span>
+            </summary>
+            <form action={generateSwissRound} className="px-4 pb-4 pt-3 border-t border-bb-border/40 space-y-3">
+              <input type="hidden" name="leagueId"     value={selectedLeagueId} />
+              <input type="hidden" name="seasonId"     value={selectedSeasonId ?? ''} />
+              <input type="hidden" name="divisionId"   value={divisionId} />
+              <input type="hidden" name="tournamentId" value={selectedTournamentId} />
+              {divisionTeams.length < 2 ? (
+                <p className="text-bb-crimson-bright text-xs">At least 2 teams must be in the division to generate a Swiss round.</p>
+              ) : (
+                <>
+                  <p className="text-bb-muted text-xs">
+                    Pairs teams by current standings using the league rule set points. No rematches.
+                    Unpairable teams receive a bye this round.
+                  </p>
+                  <div className="flex items-end gap-3">
+                    <div>
+                      <label className="text-xs text-bb-muted mb-1 block uppercase tracking-widest">Round</label>
+                      <input
+                        name="round"
+                        type="number"
+                        min={1}
+                        defaultValue={nextRound}
+                        className={inputCls('w-24')}
+                      />
+                    </div>
+                    <button type="submit" className={btnCls('primary')}>Generate round</button>
                   </div>
                 </>
               )}

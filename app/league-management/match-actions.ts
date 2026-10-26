@@ -196,6 +196,85 @@ export async function generateRoundRobin(formData: FormData) {
   revalidatePath('/league-management')
 }
 
+// ── Swiss Round ───────────────────────────────────────────────────────────────
+
+export async function generateSwissRound(formData: FormData) {
+  if (!await requireCommish()) return
+
+  const leagueId     = formData.get('leagueId')     as string
+  const seasonId     = (formData.get('seasonId')     as string) || null
+  const divisionId   = formData.get('divisionId')    as string
+  const tournamentId = (formData.get('tournamentId') as string) || null
+  const round        = parseInt(formData.get('round') as string, 10)
+
+  if (!leagueId || !divisionId || !tournamentId || isNaN(round) || round < 1) return
+
+  // Fetch rule-set point values from the league
+  const league = await prisma.league.findUnique({
+    where:  { id: leagueId },
+    select: { ruleSet: { select: { pointsWin: true, pointsDraw: true, pointsLoss: true } } },
+  })
+  const pts = league?.ruleSet ?? { pointsWin: 3, pointsDraw: 1, pointsLoss: 0 }
+
+  // Teams in division
+  const teams = await prisma.team.findMany({
+    where:  { leagueId, divisionId },
+    select: { id: true, wins: true, losses: true, draws: true },
+  })
+  if (teams.length < 2) return
+
+  // Sort by points desc, wins desc as tiebreaker
+  teams.sort((a, b) => {
+    const pa = a.wins * pts.pointsWin + a.draws * pts.pointsDraw + a.losses * pts.pointsLoss
+    const pb = b.wins * pts.pointsWin + b.draws * pts.pointsDraw + b.losses * pts.pointsLoss
+    return pa !== pb ? pb - pa : b.wins - a.wins
+  })
+
+  // All existing matches → has-played set + round-conflict set
+  const existing = await prisma.match.findMany({
+    where:  { leagueId },
+    select: { homeTeamId: true, awayTeamId: true, round: true },
+  })
+  const played = new Set(existing.map(m => `${m.homeTeamId}_${m.awayTeamId}`))
+  const hasPlayed = (a: string, b: string) =>
+    played.has(`${a}_${b}`) || played.has(`${b}_${a}`)
+
+  const teamRounds = new Map<string, Set<number>>()
+  for (const m of existing) {
+    if (!teamRounds.has(m.homeTeamId)) teamRounds.set(m.homeTeamId, new Set())
+    if (!teamRounds.has(m.awayTeamId)) teamRounds.set(m.awayTeamId, new Set())
+    teamRounds.get(m.homeTeamId)!.add(m.round)
+    teamRounds.get(m.awayTeamId)!.add(m.round)
+  }
+
+  // Greedy Swiss pairing (top-ranked first, skip rematches)
+  const unpaired = [...teams]
+  const pairs: [string, string][] = []
+  while (unpaired.length >= 2) {
+    const top = unpaired.shift()!
+    const idx = unpaired.findIndex(c => !hasPlayed(top.id, c.id))
+    if (idx !== -1) {
+      pairs.push([top.id, unpaired[idx].id])
+      unpaired.splice(idx, 1)
+    }
+  }
+
+  // Filter out round conflicts and create
+  const toCreate = pairs.filter(([h, a]) =>
+    !teamRounds.get(h)?.has(round) && !teamRounds.get(a)?.has(round)
+  )
+  if (toCreate.length === 0) return
+
+  await prisma.match.createMany({
+    data: toCreate.map(([homeTeamId, awayTeamId]) => ({
+      leagueId, seasonId, tournamentId, homeTeamId, awayTeamId,
+      round, status: 'SCHEDULED',
+    })),
+  })
+
+  revalidatePath('/league-management')
+}
+
 // ── Single match date setter ──────────────────────────────────────────────────
 
 export async function setMatchDate(formData: FormData) {
