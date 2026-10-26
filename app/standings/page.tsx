@@ -37,12 +37,16 @@ function sortTeams(
 
     for (const tb of tiebreakers) {
       let diff = 0
-      if (tb === 'WINS')      diff = b.wins - a.wins
-      if (tb === 'DRAWS')     diff = b.draws - a.draws
-      if (tb === 'LOSSES')    diff = a.losses - b.losses
-      if (tb === 'TD_DIFF')   diff = b.tdsDiff - a.tdsDiff
-      if (tb === 'TD_SCORED') diff = b.tdsScored - a.tdsScored
-      if (tb === 'ELO')       diff = b.eloRating - a.eloRating
+      if (tb === 'WINS')        diff = b.wins - a.wins
+      if (tb === 'DRAWS')       diff = b.draws - a.draws
+      if (tb === 'LOSSES')      diff = a.losses - b.losses
+      if (tb === 'PTS')         diff = (b.wins * pw + b.draws * pd + b.losses * pl) - (a.wins * pw + a.draws * pd + a.losses * pl)
+      if (tb === 'TD_SCORED')   diff = b.tdsScored - a.tdsScored
+      if (tb === 'TD_CONCEDED') diff = a.tdsConceded - b.tdsConceded
+      if (tb === 'TD_DIFF')     diff = b.tdsDiff - a.tdsDiff
+      if (tb === 'TCASF')       diff = b.tcasf - a.tcasf
+      if (tb === 'TCASA')       diff = a.tcasa - b.tcasa
+      if (tb === 'TCDIFF')      diff = (b.tcasf - b.tcasa) - (a.tcasf - a.tcasa)
       if (diff !== 0) return diff
     }
     return 0
