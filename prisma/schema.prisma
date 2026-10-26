@@ -92,6 +92,7 @@ model Coach {
   primaryLeagueId String?
   mfaSecret       String?
   mfaEnabled      Boolean    @default(false)
+  eloRating       Float      @default(1500)
   newsPosts       NewsPost[]
   teams           Team[]
   primaryLeague   League?    @relation("CoachPrimaryLeague", fields: [primaryLeagueId], references: [id], onDelete: SetNull)
@@ -178,6 +179,7 @@ model Team {
   treasury         Int          @default(0)
   isActive         Boolean      @default(true)
   logoUrl          String?
+  eloRating        Float        @default(1500)
   awayMatches      Match[]      @relation("AwayTeam")
   homeMatches      Match[]      @relation("HomeTeam")
   coach            Coach        @relation(fields: [coachId], references: [id])
@@ -268,6 +270,8 @@ model Match {
   awayFans Int?
   homeFame Int?
   awayFame Int?
+  homeEloChange Float?
+  awayEloChange Float?
   weather           MdMatchEvent?    @relation(fields: [weatherMdMatchEventId], references: [id])
   awayTeam          Team             @relation("AwayTeam", fields: [awayTeamId], references: [id])
   homeTeam          Team             @relation("HomeTeam", fields: [homeTeamId], references: [id])

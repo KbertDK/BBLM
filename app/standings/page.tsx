@@ -53,6 +53,7 @@ interface TeamRow {
   losses: number
   teamValue: number
   divisionId: string | null
+  eloRating: number
 }
 
 interface TournamentGroup {
@@ -83,7 +84,7 @@ function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
 }) {
   return (
     <div className="bg-bb-dark border border-bb-gold/20 rounded-sm overflow-x-auto">
-      <div className="grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-4 py-2.5 gap-2 min-w-[560px]">
+      <div className="grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px_56px] text-[10px] font-heading tracking-widest uppercase text-bb-muted/50 bg-bb-darker border-b border-bb-border px-4 py-2.5 gap-2 min-w-[640px]">
         <span className="text-center">#</span>
         <span>Team</span>
         <span>Coach</span>
@@ -93,6 +94,7 @@ function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
         <span className="text-center">D</span>
         <span className="text-center">L</span>
         <span className="text-center">Pts</span>
+        <span className="text-center" title="ELO Rating">ELO</span>
       </div>
 
       {teams.length === 0 && (
@@ -107,7 +109,7 @@ function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
             key={team.id}
             href={`/teams/${team.id}`}
             className={clsx(
-              'grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px] items-center px-4 py-3 gap-2 border-b border-bb-border/60 last:border-0 transition-colors group min-w-[560px]',
+              'grid grid-cols-[32px_1fr_140px_72px_64px_32px_32px_32px_48px_56px] items-center px-4 py-3 gap-2 border-b border-bb-border/60 last:border-0 transition-colors group min-w-[640px]',
               isFirst ? 'hover:bg-bb-gold/8' : 'hover:bg-bb-gold/5',
             )}
           >
@@ -134,6 +136,9 @@ function TeamTable({ teams, pointsWin, pointsDraw, pointsLoss }: {
               isFirst ? 'text-bb-gold' : 'text-bb-gold/70',
             )}>
               {pts}
+            </span>
+            <span className="text-center text-xs font-heading font-bold text-bb-gold/60 tabular-nums">
+              {Math.round(team.eloRating)}
             </span>
           </Link>
         )
@@ -297,6 +302,7 @@ export default async function StandingsPage({ searchParams }: Props) {
           losses:     t.losses,
           teamValue,
           divisionId: t.divisionId,
+          eloRating:  t.eloRating,
         }
       })
 

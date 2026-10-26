@@ -4,12 +4,13 @@ import { logoutAction } from '@/app/auth/login/actions'
 import MobileNavClient from './MobileNavClient'
 
 const navLinks = [
-  { href: '/',           label: 'Home' },
-  { href: '/teams',      label: 'Teams' },
-  { href: '/races',      label: 'Races' },
-  { href: '/schedule',   label: 'Schedule' },
-  { href: '/standings',  label: 'Standings' },
-  { href: '/rules',      label: 'Rules' },
+  { href: '/',             label: 'Home' },
+  { href: '/teams',        label: 'Teams' },
+  { href: '/races',        label: 'Races' },
+  { href: '/schedule',     label: 'Schedule' },
+  { href: '/standings',    label: 'Standings' },
+  { href: '/leaderboard',  label: 'Leaderboard' },
+  { href: '/rules',        label: 'Rules' },
 ]
 
 export default async function Navbar() {

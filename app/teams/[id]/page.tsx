@@ -306,6 +306,11 @@ export default async function TeamPage({ params, searchParams }: Props) {
                 <div className="text-2xl font-heading font-black text-bb-gold">{pts}</div>
                 <div className="text-xs uppercase tracking-widest text-bb-muted">Pts</div>
               </div>
+              <div className="text-bb-border font-thin">·</div>
+              <div className="text-center">
+                <div className="text-2xl font-heading font-black text-bb-gold/70">{Math.round(team.eloRating)}</div>
+                <div className="text-xs uppercase tracking-widest text-bb-muted">ELO</div>
+              </div>
             </div>
           </div>
 

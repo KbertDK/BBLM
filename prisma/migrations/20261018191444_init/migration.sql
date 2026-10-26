@@ -654,14 +654,3 @@ ALTER TABLE "_StarPlayerToRace" ADD CONSTRAINT "_StarPlayerToRace_A_fkey" FOREIG
 
 -- AddForeignKey
 ALTER TABLE "_StarPlayerToRace" ADD CONSTRAINT "_StarPlayerToRace_B_fkey" FOREIGN KEY ("B") REFERENCES "Race"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
-┌─────────────────────────────────────────────────────────┐
-│  Update available 5.22.0 -> 8.0.0-rc.23                 │
-│                                                         │
-│  This is a major update - please follow the guide at    │
-│  https://pris.ly/d/major-version-upgrade                │
-│                                                         │
-│  Run the following to update                            │
-│    npm i --save-dev prisma@latest                       │
-│    npm i @prisma/client@latest                          │
-└─────────────────────────────────────────────────────────┘

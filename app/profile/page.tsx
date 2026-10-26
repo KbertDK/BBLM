@@ -42,7 +42,7 @@ export default async function ProfilePage() {
   const [coach, leagues] = await Promise.all([
     prisma.coach.findUnique({
       where:  { id: session.coachId },
-      select: { name: true, alias: true, email: true, phone: true, address: true, zip: true, city: true, primaryLeagueId: true, mfaEnabled: true },
+      select: { name: true, alias: true, email: true, phone: true, address: true, zip: true, city: true, primaryLeagueId: true, mfaEnabled: true, eloRating: true },
     }),
     prisma.league.findMany({ where: { isHidden: false }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
   ])
@@ -57,6 +57,17 @@ export default async function ProfilePage() {
             My Profile
           </h1>
           <p className="text-bb-muted text-sm">Update your personal information and contact details.</p>
+        </div>
+
+        {/* ELO stat */}
+        <div className="bg-bb-dark border border-bb-gold/20 rounded-sm p-5 mb-8 flex items-center gap-6">
+          <div>
+            <div className="text-[10px] font-heading tracking-widest uppercase text-bb-muted/60 mb-1">Coach ELO Rating</div>
+            <div className="font-heading text-4xl font-black text-bb-gold tabular-nums">{Math.round(coach.eloRating)}</div>
+          </div>
+          <p className="text-xs text-bb-muted/50 leading-relaxed max-w-xs">
+            Your ELO rating reflects your performance across all your teams. It starts at 1500 and updates after every match.
+          </p>
         </div>
 
         <form action={updateProfile} className="space-y-8">

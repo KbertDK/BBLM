@@ -9,6 +9,7 @@ import { spirallingExpenseFor } from '@/lib/spirallingExpenses'
 import { computePettyCashReturn } from '@/lib/postMatchFinance'
 import { computeTV } from '@/lib/teamValue'
 import { generateMatchRecap } from '@/lib/recap'
+import { expectedScore, newRating } from '@/lib/elo'
 
 async function requireMatchParticipant(matchId: string) {
   const session = await getSession()
@@ -482,8 +483,8 @@ export async function completeMatchFull(formData: FormData) {
   const homeExpense = spirallingExpenseFor(match.homeTeamValue ?? 0, tiers)
   const awayExpense = spirallingExpenseFor(match.awayTeamValue ?? 0, tiers)
   const [homeTeamRow, awayTeamRow] = await Promise.all([
-    prisma.team.findUnique({ where: { id: match.homeTeamId }, select: { treasury: true } }),
-    prisma.team.findUnique({ where: { id: match.awayTeamId }, select: { treasury: true } }),
+    prisma.team.findUnique({ where: { id: match.homeTeamId }, select: { treasury: true, eloRating: true, coachId: true } }),
+    prisma.team.findUnique({ where: { id: match.awayTeamId }, select: { treasury: true, eloRating: true, coachId: true } }),
   ])
   const homeAvailable = (homeTeamRow?.treasury ?? 0) + homeWinnings + homePettyCashReturned
   const awayAvailable = (awayTeamRow?.treasury ?? 0) + awayWinnings + awayPettyCashReturned
@@ -533,10 +534,27 @@ export async function completeMatchFull(formData: FormData) {
   const homeFfNew = Math.max(0, Math.min(9, match.homeTeam.fanFactor + homeFfDelta))
   const awayFfNew = Math.max(0, Math.min(9, match.awayTeam.fanFactor + awayFfDelta))
 
+  // ELO calculation
+  const homeTeamElo = homeTeamRow?.eloRating ?? 1500
+  const awayTeamElo = awayTeamRow?.eloRating ?? 1500
+  const homeActual  = homeWin ? 1 : isDraw ? 0.5 : 0
+  const awayActual  = 1 - homeActual
+  const newHomeTeamElo = newRating(homeTeamElo, expectedScore(homeTeamElo, awayTeamElo), homeActual)
+  const newAwayTeamElo = newRating(awayTeamElo, expectedScore(awayTeamElo, homeTeamElo), awayActual)
+
+  const [homeCoachRow, awayCoachRow] = await Promise.all([
+    homeTeamRow?.coachId ? prisma.coach.findUnique({ where: { id: homeTeamRow.coachId }, select: { eloRating: true } }) : null,
+    awayTeamRow?.coachId ? prisma.coach.findUnique({ where: { id: awayTeamRow.coachId }, select: { eloRating: true } }) : null,
+  ])
+  const homeCoachElo   = homeCoachRow?.eloRating ?? 1500
+  const awayCoachElo   = awayCoachRow?.eloRating ?? 1500
+  const newHomeCoachElo = newRating(homeCoachElo, expectedScore(homeCoachElo, awayCoachElo), homeActual)
+  const newAwayCoachElo = newRating(awayCoachElo, expectedScore(awayCoachElo, homeCoachElo), awayActual)
+
   await prisma.$transaction([
     prisma.match.update({
       where: { id: matchId },
-      data:  { status: 'COMPLETED', homeScore, awayScore },
+      data:  { status: 'COMPLETED', homeScore, awayScore, homeEloChange: newHomeTeamElo - homeTeamElo, awayEloChange: newAwayTeamElo - awayTeamElo },
     }),
     prisma.team.update({
       where: { id: match.homeTeamId },
@@ -546,6 +564,7 @@ export async function completeMatchFull(formData: FormData) {
         draws:     { increment: isDraw  ? 1 : 0 },
         treasury:  { increment: homeWinnings + homePettyCashReturned - homeExpenseClamped },
         fanFactor: homeFfNew,
+        eloRating: newHomeTeamElo,
       },
     }),
     prisma.team.update({
@@ -556,8 +575,11 @@ export async function completeMatchFull(formData: FormData) {
         draws:     { increment: isDraw  ? 1 : 0 },
         treasury:  { increment: awayWinnings + awayPettyCashReturned - awayExpenseClamped },
         fanFactor: awayFfNew,
+        eloRating: newAwayTeamElo,
       },
     }),
+    ...(homeTeamRow?.coachId ? [prisma.coach.update({ where: { id: homeTeamRow.coachId }, data: { eloRating: newHomeCoachElo } })] : []),
+    ...(awayTeamRow?.coachId ? [prisma.coach.update({ where: { id: awayTeamRow.coachId }, data: { eloRating: newAwayCoachElo } })] : []),
     ...playerUpdates.map((u) => {
       const data: Prisma.TeamPlayerUpdateInput = {
         touchdowns:     { increment: u.deltaTouchdowns },

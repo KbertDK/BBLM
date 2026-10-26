@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
+import { expectedScore, newRating } from '@/lib/elo'
 
 async function requireCommish() {
   const session = await getSession()
@@ -95,6 +96,26 @@ export async function completeMatch(formData: FormData) {
   const awayWin = awayScore > homeScore
   const isDraw  = homeScore === awayScore
 
+  const [homeTeamRow, awayTeamRow] = await Promise.all([
+    prisma.team.findUnique({ where: { id: match.homeTeamId }, select: { eloRating: true, coachId: true } }),
+    prisma.team.findUnique({ where: { id: match.awayTeamId }, select: { eloRating: true, coachId: true } }),
+  ])
+  const homeTeamElo = homeTeamRow?.eloRating ?? 1500
+  const awayTeamElo = awayTeamRow?.eloRating ?? 1500
+  const homeActual  = homeWin ? 1 : isDraw ? 0.5 : 0
+  const awayActual  = 1 - homeActual
+  const newHomeTeamElo = newRating(homeTeamElo, expectedScore(homeTeamElo, awayTeamElo), homeActual)
+  const newAwayTeamElo = newRating(awayTeamElo, expectedScore(awayTeamElo, homeTeamElo), awayActual)
+
+  const [homeCoachRow, awayCoachRow] = await Promise.all([
+    homeTeamRow?.coachId ? prisma.coach.findUnique({ where: { id: homeTeamRow.coachId }, select: { eloRating: true } }) : null,
+    awayTeamRow?.coachId ? prisma.coach.findUnique({ where: { id: awayTeamRow.coachId }, select: { eloRating: true } }) : null,
+  ])
+  const homeCoachElo    = homeCoachRow?.eloRating ?? 1500
+  const awayCoachElo    = awayCoachRow?.eloRating ?? 1500
+  const newHomeCoachElo = newRating(homeCoachElo, expectedScore(homeCoachElo, awayCoachElo), homeActual)
+  const newAwayCoachElo = newRating(awayCoachElo, expectedScore(awayCoachElo, homeCoachElo), awayActual)
+
   await prisma.$transaction([
     prisma.match.update({
       where: { id: matchId },
@@ -103,19 +124,23 @@ export async function completeMatch(formData: FormData) {
     prisma.team.update({
       where: { id: match.homeTeamId },
       data: {
-        wins:   { increment: homeWin ? 1 : 0 },
-        losses: { increment: awayWin ? 1 : 0 },
-        draws:  { increment: isDraw  ? 1 : 0 },
+        wins:      { increment: homeWin ? 1 : 0 },
+        losses:    { increment: awayWin ? 1 : 0 },
+        draws:     { increment: isDraw  ? 1 : 0 },
+        eloRating: newHomeTeamElo,
       },
     }),
     prisma.team.update({
       where: { id: match.awayTeamId },
       data: {
-        wins:   { increment: awayWin ? 1 : 0 },
-        losses: { increment: homeWin ? 1 : 0 },
-        draws:  { increment: isDraw  ? 1 : 0 },
+        wins:      { increment: awayWin ? 1 : 0 },
+        losses:    { increment: homeWin ? 1 : 0 },
+        draws:     { increment: isDraw  ? 1 : 0 },
+        eloRating: newAwayTeamElo,
       },
     }),
+    ...(homeTeamRow?.coachId ? [prisma.coach.update({ where: { id: homeTeamRow.coachId }, data: { eloRating: newHomeCoachElo } })] : []),
+    ...(awayTeamRow?.coachId ? [prisma.coach.update({ where: { id: awayTeamRow.coachId }, data: { eloRating: newAwayCoachElo } })] : []),
   ])
 
   revalidatePath('/league-management')
