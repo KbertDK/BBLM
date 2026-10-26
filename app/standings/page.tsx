@@ -190,22 +190,43 @@ export default async function StandingsPage({ searchParams }: Props) {
     },
     include: {
       race:    { select: { name: true, rerollPrice: true } },
-      coach:   { select: { name: true, alias: true } },
+      coach:   { select: { name: true, alias: true, eloRating: true } },
+      prizeAwards: {
+        where:  { prizeType: { type: 'TEAM' } },
+        select: { id: true },
+      },
       players: {
         where:  { status: { in: ['ACTIVE', 'MNG'] } },
         select: { value: true, playerType: { select: { cost: true } } },
       },
       homeMatches: {
         where:  { status: 'COMPLETED', ...(targetSeasonIds.length > 0 ? { seasonId: { in: targetSeasonIds } } : {}) },
-        select: { homeScore: true, awayScore: true },
+        select: { id: true, homeScore: true, awayScore: true, scheduledAt: true, createdAt: true },
       },
       awayMatches: {
         where:  { status: 'COMPLETED', ...(targetSeasonIds.length > 0 ? { seasonId: { in: targetSeasonIds } } : {}) },
-        select: { homeScore: true, awayScore: true },
+        select: { id: true, homeScore: true, awayScore: true, scheduledAt: true, createdAt: true },
       },
     },
     orderBy: { name: 'asc' },
   })
+
+  // Casualty aggregation — one query across all scoped matches
+  const allMatchIds = [...new Set(
+    teams.flatMap(t => [...t.homeMatches.map(m => m.id), ...t.awayMatches.map(m => m.id)])
+  )]
+  const casStats = allMatchIds.length > 0
+    ? await prisma.matchPlayerStat.findMany({
+        where:  { matchId: { in: allMatchIds } },
+        select: { matchId: true, casualties: true, teamPlayer: { select: { teamId: true } } },
+      })
+    : []
+  const matchCasByTeam = new Map<string, Map<string, number>>()
+  for (const s of casStats) {
+    if (!matchCasByTeam.has(s.matchId)) matchCasByTeam.set(s.matchId, new Map())
+    const m = matchCasByTeam.get(s.matchId)!
+    m.set(s.teamPlayer.teamId, (m.get(s.teamPlayer.teamId) ?? 0) + s.casualties)
+  }
 
   // Tournaments linked to divisions in target seasons
   const tournaments = await prisma.tournament.findMany({
@@ -237,20 +258,56 @@ export default async function StandingsPage({ searchParams }: Props) {
         const tdsConceded = t.homeMatches.reduce((s, m) => s + (m.awayScore ?? 0), 0)
                           + t.awayMatches.reduce((s, m) => s + (m.homeScore ?? 0), 0)
 
+        let tcasf = 0, tcasa = 0
+        for (const match of [...t.homeMatches, ...t.awayMatches]) {
+          const byTeam   = matchCasByTeam.get(match.id)
+          const myCas    = byTeam?.get(t.id) ?? 0
+          const totalCas = [...(byTeam?.values() ?? [])].reduce((a, b) => a + b, 0)
+          tcasf += myCas
+          tcasa += totalCas - myCas
+        }
+
+        const matchResults = [
+          ...t.homeMatches.map(m => ({
+            date: m.scheduledAt ?? m.createdAt,
+            r: (m.homeScore ?? 0) > (m.awayScore ?? 0) ? 'W' as const
+             : (m.homeScore ?? 0) < (m.awayScore ?? 0) ? 'L' as const : 'D' as const,
+          })),
+          ...t.awayMatches.map(m => ({
+            date: m.scheduledAt ?? m.createdAt,
+            r: (m.awayScore ?? 0) > (m.homeScore ?? 0) ? 'W' as const
+             : (m.awayScore ?? 0) < (m.homeScore ?? 0) ? 'L' as const : 'D' as const,
+          })),
+        ].sort((a, b) => a.date.getTime() - b.date.getTime())
+
+        let sw = 0, sl = 0, sd = 0, cw = 0, cl = 0, cd = 0
+        for (const { r } of matchResults) {
+          if (r === 'W') { cw++; cl = 0; cd = 0; sw = Math.max(sw, cw) }
+          else if (r === 'L') { cl++; cw = 0; cd = 0; sl = Math.max(sl, cl) }
+          else               { cd++; cw = 0; cl = 0; sd = Math.max(sd, cd) }
+        }
+
         return {
-          id:          t.id,
-          name:        t.name,
-          race:        t.race.name,
-          coachName:   t.coach.alias ?? t.coach.name,
-          wins:        t.wins,
-          draws:       t.draws,
-          losses:      t.losses,
+          id:             t.id,
+          name:           t.name,
+          race:           t.race.name,
+          coachName:      t.coach.alias ?? t.coach.name,
+          wins:           t.wins,
+          draws:          t.draws,
+          losses:         t.losses,
           teamValue,
-          divisionId:  t.divisionId,
-          eloRating:   t.eloRating,
+          divisionId:     t.divisionId,
+          eloRating:      t.eloRating,
+          coachEloRating: t.coach.eloRating,
           tdsScored,
           tdsConceded,
-          tdsDiff:     tdsScored - tdsConceded,
+          tdsDiff:        tdsScored - tdsConceded,
+          streakWin:      sw,
+          streakLoss:     sl,
+          streakDraw:     sd,
+          wonPrizes:      t.prizeAwards.length,
+          tcasf,
+          tcasa,
         }
       })
 
