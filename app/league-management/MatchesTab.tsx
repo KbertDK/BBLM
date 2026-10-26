@@ -9,7 +9,7 @@ import {
 } from 'date-fns'
 import {
   createMatch, deleteMatch, setMatchLive, completeMatch,
-  generateRoundRobin, bulkSetMatchDates,
+  generateRoundRobin, bulkSetMatchDates, setMatchDate,
 } from './match-actions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -230,6 +230,7 @@ export default function MatchesTab({
   const router = useRouter()
   const [selectedMatchIds, setSelectedMatchIds] = useState<Set<string>>(new Set())
   const [selectedTournamentId, setSelectedTournamentId] = useState<string>('')
+  const [editingDateId, setEditingDateId] = useState<string | null>(null)
 
   // Auto-select the single division when there's only one
   const effectiveDivisionId = leagueDivisions.length === 1
@@ -580,14 +581,37 @@ export default function MatchesTab({
                             {match.awayTeamName}
                           </span>
 
-                          <span className="text-bb-muted text-xs w-24 text-right shrink-0">
-                            {match.scheduledAt
-                              ? new Date(match.scheduledAt).toLocaleDateString('en', {
-                                  day: 'numeric', month: 'short', year: '2-digit',
-                                })
-                              : <span className="text-bb-muted/40 italic">TBD</span>
-                            }
-                          </span>
+                          {/* Date cell — inline editor for SCHEDULED matches */}
+                          {isScheduled && editingDateId === match.id ? (
+                            <form
+                              action={async (fd) => { await setMatchDate(fd); setEditingDateId(null) }}
+                              className="flex items-center gap-1.5 shrink-0"
+                            >
+                              <input type="hidden" name="matchId" value={match.id} />
+                              <DatePickerInput name="scheduledAt" defaultValue={match.scheduledAt ?? undefined} />
+                              <button type="submit" className={btnCls('ghost')}>Save</button>
+                              <button type="button" onClick={() => setEditingDateId(null)} className={btnCls('danger')}>✕</button>
+                            </form>
+                          ) : (
+                            <span className="text-bb-muted text-xs w-24 text-right shrink-0 flex items-center justify-end gap-1">
+                              {match.scheduledAt
+                                ? new Date(match.scheduledAt).toLocaleDateString('en', {
+                                    day: 'numeric', month: 'short', year: '2-digit',
+                                  })
+                                : <span className="text-bb-muted/40 italic">TBD</span>
+                              }
+                              {isScheduled && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingDateId(match.id)}
+                                  className="text-bb-muted/40 hover:text-bb-gold transition-colors leading-none"
+                                  title="Set date"
+                                >
+                                  ✏
+                                </button>
+                              )}
+                            </span>
+                          )}
 
                           <Badge label={MATCH_STATUS_LABEL[match.status]} cls={MATCH_STATUS_CLS[match.status]} />
 

@@ -196,6 +196,27 @@ export async function generateRoundRobin(formData: FormData) {
   revalidatePath('/league-management')
 }
 
+// ── Single match date setter ──────────────────────────────────────────────────
+
+export async function setMatchDate(formData: FormData) {
+  if (!await requireCommish()) return
+
+  const matchId     = formData.get('matchId')    as string
+  const raw         = (formData.get('scheduledAt') as string | null) ?? ''
+  const scheduledAt = raw ? new Date(raw) : null
+
+  if (!matchId) return
+  if (scheduledAt && isNaN(scheduledAt.getTime())) return
+
+  await prisma.match.update({
+    where: { id: matchId, status: 'SCHEDULED' },
+    data:  { scheduledAt },
+  })
+
+  revalidatePath('/league-management')
+  revalidatePath('/schedule')
+}
+
 // ── Bulk date setter ───────────────────────────────────────────────────────────
 
 export async function bulkSetMatchDates(formData: FormData) {
