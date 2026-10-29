@@ -2,7 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 
 export const config = {
-  matcher: ['/teams/:path+', '/league-management', '/league-management/:path*', '/profile', '/data-manager', '/rules'],
+  matcher: [
+    '/teams/new',
+    '/races', '/races/:path*',
+    '/standings',
+    '/leaderboard',
+    '/news',
+    '/scoreboard',
+    '/matches/:path+',
+    '/league-management', '/league-management/:path*',
+    '/profile',
+    '/data-manager',
+    '/rules',
+  ],
 }
 
 export async function middleware(req: NextRequest) {

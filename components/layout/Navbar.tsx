@@ -3,18 +3,21 @@ import { getSession } from '@/lib/auth'
 import { logoutAction } from '@/app/auth/login/actions'
 import MobileNavClient from './MobileNavClient'
 
-const navLinks = [
-  { href: '/',             label: 'Home' },
-  { href: '/teams',        label: 'Teams' },
-  { href: '/races',        label: 'Races' },
-  { href: '/schedule',     label: 'Schedule' },
-  { href: '/standings',    label: 'Standings' },
-  { href: '/leaderboard',  label: 'Leaderboard' },
-  { href: '/rules',        label: 'Rules' },
+const publicLinks = [
+  { href: '/',         label: 'Home' },
+  { href: '/teams',    label: 'Teams' },
+  { href: '/schedule', label: 'Schedule' },
+]
+const authLinks = [
+  { href: '/races',       label: 'Races' },
+  { href: '/standings',   label: 'Standings' },
+  { href: '/leaderboard', label: 'Leaderboard' },
+  { href: '/rules',       label: 'Rules' },
 ]
 
 export default async function Navbar() {
   const session = await getSession()
+  const navLinks = session ? [...publicLinks, ...authLinks] : publicLinks
 
   const isCommish = session?.role === 'COMMISH' || session?.role === 'ADMIN'
   const isAdmin   = session?.role === 'ADMIN'
