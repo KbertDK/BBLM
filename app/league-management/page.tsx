@@ -24,6 +24,9 @@ import {
 import MatchesTab from './MatchesTab'
 import PrizesTab from './PrizesTab'
 import type { AwardRow } from './PrizesTab'
+import CommishNewsTab from './CommishNewsTab'
+import type { CommishNewsRow } from './CommishNewsTab'
+import { publishDueCommishNews } from '@/lib/commishNews'
 import ResetLinkButton from './ResetLinkButton'
 import TiebreakersConfig from './TiebreakersConfig'
 import { parseTiebreakers } from '@/lib/tiebreakers'
@@ -212,6 +215,27 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
     ])
   }
 
+  // Commish News tab — only fetch when needed
+  let commishNewsItems: CommishNewsRow[] = []
+
+  if (tab === 'commish-news') {
+    await publishDueCommishNews()
+    const rows = await prisma.commishNews.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { author: { select: { name: true } } },
+    })
+    commishNewsItems = rows.map((r) => ({
+      id:          r.id,
+      title:       r.title,
+      body:        r.body,
+      status:      r.status,
+      scheduledAt: r.scheduledAt?.toISOString() ?? null,
+      publishedAt: r.publishedAt?.toISOString() ?? null,
+      authorName:  r.author.name,
+      createdAt:   r.createdAt.toISOString(),
+    }))
+  }
+
   // Matches tab — only fetch when needed
   let leagueMatches: Awaited<ReturnType<typeof getMatchesByLeague>> = []
   let leagueTeams: { id: string; name: string; divisionId: string | null; division: { id: string; name: string } | null }[] = []
@@ -269,6 +293,7 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
   const tabItems = [
     { value: 'leagues', label: 'Leagues & Seasons' },
     { value: 'matches', label: 'Matches & Schedule' },
+    ...(isCommish ? [{ value: 'commish-news', label: 'Commish News' }] : []),
     ...(isCommish ? [{ value: 'prizes', label: 'Prizes' }] : []),
     ...(isAdmin ? [{ value: 'users', label: 'Users' }] : []),
   ]
@@ -867,6 +892,14 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
               matches={serializedMatches}
               tournaments={leagueTournaments}
             />
+          </section>
+        )}
+
+        {/* ── Tab 2.5: Commish News ── */}
+        {isCommish && tab === 'commish-news' && (
+          <section>
+            <SectionHeading title="Commish News" />
+            <CommishNewsTab items={commishNewsItems} />
           </section>
         )}
 

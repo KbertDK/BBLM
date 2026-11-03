@@ -95,6 +95,7 @@ model Coach {
   mfaEnabled      Boolean    @default(false)
   eloRating       Float      @default(1500)
   newsPosts       NewsPost[]
+  commishNews     CommishNews[]
   teams           Team[]
   primaryLeague   League?    @relation("CoachPrimaryLeague", fields: [primaryLeagueId], references: [id], onDelete: SetNull)
   resetTokens     PasswordResetToken[]
@@ -437,24 +438,46 @@ model MdStarPlayer {
 }
 
 model NewsPost {
-  id        String   @id @default(cuid())
-  title     String
-  body      String
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  coachNote String   @default("")
-  playerId  String?
-  teamId    String?
-  matchId   String?  @unique
-  author    Coach    @relation(fields: [authorId], references: [id])
-  match     Match?   @relation(fields: [matchId], references: [id])
+  id          String       @id @default(cuid())
+  title       String
+  body        String
+  authorId    String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  coachNote   String       @default("")
+  playerId    String?
+  teamId      String?
+  matchId     String?      @unique
+  author      Coach        @relation(fields: [authorId], references: [id])
+  match       Match?       @relation(fields: [matchId], references: [id])
+  commishNews CommishNews?
 }
 
 enum CoachRole {
   ADMIN
   COMMISH
   COACH
+}
+
+enum CommishNewsStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+}
+
+model CommishNews {
+  id          String            @id @default(cuid())
+  title       String
+  body        String
+  authorId    String
+  status      CommishNewsStatus @default(DRAFT)
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  newsPostId  String?           @unique
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  author      Coach             @relation(fields: [authorId], references: [id])
+  newsPost    NewsPost?         @relation(fields: [newsPostId], references: [id])
 }
 
 enum SeasonStatus {

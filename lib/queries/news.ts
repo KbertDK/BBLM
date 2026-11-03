@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma'
 import { NewsPostSummary } from '@/lib/types'
+import { publishDueCommishNews } from '@/lib/commishNews'
 
 const ARCHIVE_PAGE_SIZE = 20
 
@@ -16,6 +17,7 @@ function mapPost(p: { id: string; title: string; body: string; coachNote: string
 }
 
 export async function getLatestNews(): Promise<NewsPostSummary[]> {
+  await publishDueCommishNews()
   const posts = await prisma.newsPost.findMany({
     orderBy: { createdAt: 'desc' },
     take: 8,
@@ -25,6 +27,7 @@ export async function getLatestNews(): Promise<NewsPostSummary[]> {
 }
 
 export async function getNewsArchive(page: number): Promise<{ posts: NewsPostSummary[]; total: number; pageSize: number }> {
+  await publishDueCommishNews()
   const [posts, total] = await Promise.all([
     prisma.newsPost.findMany({
       orderBy: { createdAt: 'desc' },
