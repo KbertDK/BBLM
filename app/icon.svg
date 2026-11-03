@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 300 220" width="600" height="440">
+  <defs>
+    <linearGradient id="spikeShade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.5" stop-color="#f2f2f2"/>
+      <stop offset="0.51" stop-color="#b8b8b8"/>
+      <stop offset="1" stop-color="#8c8c8c"/>
+    </linearGradient>
+
+    <!-- one spike, pointing up, base at origin -->
+    <g id="spike">
+      <path d="M-10,8 Q-4,-14 0,-34 Q4,-14 10,8 Z" fill="url(#spikeShade)" stroke="#000" stroke-width="2.5" stroke-linejoin="round"/>
+    </g>
+
+    <!-- spikes along the top edge of the ball -->
+    <g id="topSpikes">
+      <use xlink:href="#spike" transform="translate(73,82) rotate(-35)"/>
+      <use xlink:href="#spike" transform="translate(123.6,58.2) rotate(-13.5)"/>
+      <use xlink:href="#spike" transform="translate(176.4,58.2) rotate(13.5)"/>
+      <use xlink:href="#spike" transform="translate(227,82) rotate(35)"/>
+    </g>
+  </defs>
+
+  <rect width="300" height="220" fill="#000"/>
+
+  <!-- spikes (drawn behind the ball so their bases tuck under the rim) -->
+  <use xlink:href="#topSpikes"/>
+  <g transform="matrix(1 0 0 -1 0 220)">
+    <use xlink:href="#topSpikes"/>
+  </g>
+
+  <!-- ball body -->
+  <path d="M40,110 Q150,0 260,110 Q150,220 40,110 Z" fill="#000" stroke="#fff" stroke-width="9" stroke-linejoin="round"/>
+
+  <!-- inner outline -->
+  <path d="M64,110 Q150,24 236,110 Q150,196 64,110 Z" fill="none" stroke="#fff" stroke-width="4.5"/>
+
+  <!-- white end caps -->
+  <path d="M46,110 Q58,96 70,93 Q62,110 70,127 Q58,124 46,110 Z" fill="#fff"/>
+  <path d="M254,110 Q242,96 230,93 Q238,110 230,127 Q242,124 254,110 Z" fill="#fff"/>
+
+  <!-- BB text -->
+  <text x="150" y="111" text-anchor="middle" dominant-baseline="central"
+        font-family="Impact, 'Arial Black', 'Helvetica Neue', Arial, sans-serif"
+        font-weight="900" font-size="62" letter-spacing="4"
+        fill="#fff" stroke="#000" stroke-width="1.5" paint-order="stroke">BB</text>
+</svg>
