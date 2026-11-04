@@ -37,6 +37,8 @@ model League {
   createdAt            DateTime  @default(now())
   ruleSetId            String?
   standingsTiebreakers String?
+  heroTitle            String?
+  welcomeText          String?
   ruleSet              RuleSet?  @relation(fields: [ruleSetId], references: [id])
   matches              Match[]
   teams                Team[]

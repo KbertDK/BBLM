@@ -9,6 +9,7 @@ import MatchesPanel from '@/components/matches/MatchesPanel'
 import TeamQuickAccess from '@/components/teams/TeamQuickAccess'
 import SponsorBanner from '@/components/adverts/SponsorBanner'
 import LeagueFilter from '@/components/LeagueFilter'
+import { DEFAULT_HERO_TITLE, DEFAULT_WELCOME_TEXT } from '@/lib/leagueHero'
 
 export const revalidate = 0
 
@@ -39,11 +40,13 @@ export default async function HomePage({
     prisma.league.findMany({
       where:   { isHidden: false },
       orderBy: { createdAt: 'asc' },
-      select:  { id: true, name: true },
+      select:  { id: true, name: true, heroTitle: true, welcomeText: true },
     }),
   ])
 
   const activeLeague = leagues.find((l) => l.id === activeLeagueId)
+  const heroTitle    = activeLeague?.heroTitle ?? null
+  const welcomeText  = activeLeague?.welcomeText ?? DEFAULT_WELCOME_TEXT
 
   return (
     <div className="min-h-screen bg-grimdark-gradient">
@@ -56,11 +59,15 @@ export default async function HomePage({
             </div>
           )}
           <h1 className="font-heading text-3xl sm:text-5xl md:text-7xl font-black text-white mb-4 tracking-tight leading-none">
-            The Reikland<br />
-            <span className="text-bb-gold">Rumble League</span>
+            {heroTitle ? heroTitle : (
+              <>
+                {DEFAULT_HERO_TITLE.replace(' Rumble League', '')}<br />
+                <span className="text-bb-gold">Rumble League</span>
+              </>
+            )}
           </h1>
           <p className="text-bb-muted text-lg max-w-xl mx-auto leading-relaxed">
-            Where bones crack, legends rise, and the crowd always wants more.
+            {welcomeText}
           </p>
         </div>
       </div>

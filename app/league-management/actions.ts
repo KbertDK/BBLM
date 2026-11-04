@@ -36,6 +36,20 @@ export async function renameLeague(formData: FormData) {
   revalidatePath(REVALIDATE)
 }
 
+export async function updateLeagueHero(formData: FormData) {
+  const id          = formData.get('id') as string
+  const heroTitle   = ((formData.get('heroTitle')   as string) ?? '').trim()
+  const welcomeText = ((formData.get('welcomeText') as string) ?? '').trim()
+  if (!id) return
+
+  await prisma.league.update({
+    where: { id },
+    data:  { heroTitle: heroTitle || null, welcomeText: welcomeText || null },
+  })
+  revalidatePath('/')
+  revalidatePath(REVALIDATE)
+}
+
 export async function toggleLeagueVisibility(formData: FormData) {
   const id = formData.get('id') as string
   const league = await prisma.league.findUnique({ where: { id }, select: { isHidden: true } })

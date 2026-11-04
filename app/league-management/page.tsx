@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { getMatchesByLeague } from '@/lib/queries/matches'
 import {
-  createLeague, renameLeague, toggleLeagueVisibility, deleteLeague,
+  createLeague, renameLeague, updateLeagueHero, toggleLeagueVisibility, deleteLeague,
   createSeason, renameSeason, setSeasonStatus, deleteSeason,
   createDivision, renameDivision, toggleDivisionVisibility, deleteDivision,
   assignTeamToDivision, removeTeamFromDivision,
@@ -30,6 +30,7 @@ import { publishDueCommishNews } from '@/lib/commishNews'
 import ResetLinkButton from './ResetLinkButton'
 import TiebreakersConfig from './TiebreakersConfig'
 import { parseTiebreakers } from '@/lib/tiebreakers'
+import { DEFAULT_HERO_TITLE, DEFAULT_WELCOME_TEXT } from '@/lib/leagueHero'
 
 export const dynamic = 'force-dynamic'
 
@@ -541,6 +542,24 @@ export default async function LeagueManagementPage({ searchParams }: Props) {
                           leagueId={league.id}
                           current={parseTiebreakers(league.standingsTiebreakers)}
                         />
+                        <form action={updateLeagueHero} className="space-y-1.5 pt-2 border-t border-bb-border/30">
+                          <p className="text-xs text-bb-muted uppercase tracking-widest pt-1">Homepage Title &amp; Welcome Text</p>
+                          <input type="hidden" name="id" value={league.id} />
+                          <input
+                            name="heroTitle"
+                            defaultValue={league.heroTitle ?? ''}
+                            placeholder={DEFAULT_HERO_TITLE}
+                            className={inputCls('w-full')}
+                          />
+                          <textarea
+                            name="welcomeText"
+                            defaultValue={league.welcomeText ?? ''}
+                            placeholder={DEFAULT_WELCOME_TEXT}
+                            rows={2}
+                            className={inputCls('w-full resize-y')}
+                          />
+                          <button type="submit" className={btnCls('ghost')}>Save title &amp; welcome text</button>
+                        </form>
                         <div className="flex gap-2 pt-1 border-t border-bb-border/30">
                           <form action={toggleLeagueVisibility}>
                             <input type="hidden" name="id" value={league.id} />
