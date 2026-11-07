@@ -10,6 +10,7 @@ import { computePettyCashReturn } from '@/lib/postMatchFinance'
 import { computeTV } from '@/lib/teamValue'
 import { generateMatchRecap } from '@/lib/recap'
 import { expectedScore, newRating } from '@/lib/elo'
+import { hasActiveMatch, isMatchParticipant } from '@/lib/matchLock'
 
 async function requireMatchParticipant(matchId: string) {
   const session = await getSession()
@@ -24,13 +25,7 @@ async function requireMatchParticipant(matchId: string) {
   })
   if (!match) return null
 
-  const ok =
-    session.coachId === match.homeTeam.coachId ||
-    session.coachId === match.awayTeam.coachId ||
-    session.role === 'COMMISH' ||
-    session.role === 'ADMIN'
-
-  return ok ? session : null
+  return isMatchParticipant(session, match) ? session : null
 }
 
 // Maps short game event codes to MdMatchEvent names for FK lookup
@@ -84,6 +79,18 @@ export async function rollWeather(matchId: string, die1: number, die2: number) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
   if (die1 < 1 || die1 > 6 || die2 < 1 || die2 > 6) return
+
+  const match = await prisma.match.findUnique({
+    where:  { id: matchId },
+    select: { homeTeamId: true, awayTeamId: true },
+  })
+  if (!match) return
+
+  const [homeActive, awayActive] = await Promise.all([
+    hasActiveMatch(match.homeTeamId, matchId),
+    hasActiveMatch(match.awayTeamId, matchId),
+  ])
+  if (homeActive || awayActive) return
 
   const result = await prisma.mdMatchEvent.findFirst({
     where:  { eventType: 'Weather', dieRoll: die1 + die2 },
@@ -326,6 +333,18 @@ export async function markApothecaryUsed(matchId: string, side: 'home' | 'away')
 export async function startMatch(matchId: string) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
+
+  const match = await prisma.match.findUnique({
+    where:  { id: matchId },
+    select: { homeTeamId: true, awayTeamId: true },
+  })
+  if (!match) return
+
+  const [homeActive, awayActive] = await Promise.all([
+    hasActiveMatch(match.homeTeamId, matchId),
+    hasActiveMatch(match.awayTeamId, matchId),
+  ])
+  if (homeActive || awayActive) return
 
   await prisma.match.updateMany({
     where: { id: matchId, status: 'SCHEDULED' },

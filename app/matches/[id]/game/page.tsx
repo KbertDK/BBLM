@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth'
 import { skillRollsAvailable } from '@/lib/ssp'
 import { computeTV } from '@/lib/teamValue'
 import { getPendingJourneymen } from '@/lib/queries/teams'
+import { isMatchParticipant } from '@/lib/matchLock'
 import GameOnClient from './GameOnClient'
 
 interface PageProps {
@@ -72,14 +73,7 @@ export default async function GameOnPage({ params }: PageProps) {
 
   if (!match) redirect('/')
 
-  const isParticipant =
-    session &&
-    (session.coachId === match.homeTeam.coachId ||
-     session.coachId === match.awayTeam.coachId ||
-     session.role === 'COMMISH' ||
-     session.role === 'ADMIN')
-
-  if (!isParticipant) redirect('/')
+  if (!isMatchParticipant(session, match)) redirect('/')
 
   if (match.status === 'COMPLETED') {
     return (

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { expectedScore, newRating } from '@/lib/elo'
+import { hasActiveMatch } from '@/lib/matchLock'
 
 async function requireCommish() {
   const session = await getSession()
@@ -72,6 +73,18 @@ export async function setMatchLive(formData: FormData) {
 
   const matchId = formData.get('matchId') as string
   if (!matchId) return
+
+  const match = await prisma.match.findUnique({
+    where:  { id: matchId },
+    select: { homeTeamId: true, awayTeamId: true },
+  })
+  if (!match) return
+
+  const [homeActive, awayActive] = await Promise.all([
+    hasActiveMatch(match.homeTeamId, matchId),
+    hasActiveMatch(match.awayTeamId, matchId),
+  ])
+  if (homeActive || awayActive) return
 
   await prisma.match.update({ where: { id: matchId }, data: { status: 'LIVE' } })
   revalidatePath('/league-management')

@@ -7,7 +7,8 @@ import { updatePlayer, updateTeamInfo, deleteTeam, deactivateTeam, activateTeam,
          buyPlayer, sackPlayer, reinstatePlayer, appendTeamNewsNote, createTeamNewsPost,
          recordSkillRoll, pickSkill, pickStatIncrease, signJourneyman, fireJourneyman,
          buyReroll, sackReroll, buyAssistantCoach, sackAssistantCoach, buyCheerleader, sackCheerleader,
-         buyApothecary, sackApothecary, buyFanFactor, sackFanFactor, hasActiveMatch } from './actions'
+         buyApothecary, sackApothecary, buyFanFactor, sackFanFactor } from './actions'
+import { hasActiveMatch } from '@/lib/matchLock'
 import prisma from '@/lib/prisma'
 import { getTeamNews } from '@/lib/queries/news'
 import { skillRollsAvailable, improvementOptions, canIncreaseStat } from '@/lib/ssp'

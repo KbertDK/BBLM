@@ -7,6 +7,7 @@ import path from 'path'
 import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { skillRollsAvailable, improvementOptions, canIncreaseStat, VALUE_MODIFIERS, type StatName } from '@/lib/ssp'
+import { hasActiveMatch } from '@/lib/matchLock'
 
 async function requireOwner(teamId: string) {
   const session = await getSession()
@@ -14,20 +15,6 @@ async function requireOwner(teamId: string) {
   const team = await prisma.team.findUnique({ where: { id: teamId }, select: { coachId: true } })
   if (!team || team.coachId !== session.coachId) return null
   return { session, team }
-}
-
-// A match "locks" its teams' rosters/treasury the moment its pre-match wizard has begun
-// (earliest possible write: the weather roll) and stays locked through LIVE, until its
-// post-match step sets status to COMPLETED — regardless of win/loss history.
-export async function hasActiveMatch(teamId: string): Promise<boolean> {
-  const match = await prisma.match.findFirst({
-    where: {
-      OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }],
-      AND: { OR: [{ status: 'LIVE' }, { status: 'SCHEDULED', weatherMdMatchEventId: { not: null } }] },
-    },
-    select: { id: true },
-  })
-  return !!match
 }
 
 export async function updatePlayer(formData: FormData) {
