@@ -6,7 +6,7 @@ import { skillRollsAvailable } from '@/lib/ssp'
 import { computeTV } from '@/lib/teamValue'
 import { getPendingJourneymen } from '@/lib/queries/teams'
 import { isMatchParticipant } from '@/lib/matchLock'
-import GameOnClient from './GameOnClient'
+import GameOnClient, { type MatchEvent } from './GameOnClient'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -199,7 +199,7 @@ export default async function GameOnPage({ params }: PageProps) {
   }
 
   // Parallel-fetch pricelist player types, mercs, journeymen, star players, generic inducements, and Special Play Card decks
-  const [homePlayerTypes, awayPlayerTypes, matchMercs, matchJourneymen, homeStarPlayerRows, awayStarPlayerRows, matchStarRows, mdInducements, matchInducements, specialPlayDecks, matchSpecialPlayCards, kickoffTableRows] = await Promise.all([
+  const [homePlayerTypes, awayPlayerTypes, matchMercs, matchJourneymen, homeStarPlayerRows, awayStarPlayerRows, matchStarRows, mdInducements, matchInducements, specialPlayDecks, matchSpecialPlayCards, kickoffTableRows, matchEventRows] = await Promise.all([
     prisma.playerType.findMany({
       where:   { raceId: match.homeTeam.raceId },
       orderBy: { cost: 'asc' },
@@ -260,6 +260,11 @@ export default async function GameOnPage({ params }: PageProps) {
       where:   { eventType: 'Kick off' },
       select:  { dieRoll: true, name: true, description: true },
       orderBy: { dieRoll: 'asc' },
+    }),
+    prisma.matchEvent.findMany({
+      where:   { matchId: id },
+      orderBy: { createdAt: 'asc' },
+      select:  { id: true, type: true, label: true, scoringTeam: true, data: true },
     }),
   ])
 
@@ -530,6 +535,13 @@ export default async function GameOnPage({ params }: PageProps) {
     homeSpecialPlayCards,
     awaySpecialPlayCards,
     kickoffTable: kickoffTableRows.map((r) => ({ dieRoll: r.dieRoll!, name: r.name, description: r.description ?? '' })),
+    initialEvents: matchEventRows.map((r) => ({
+      id:          r.id,
+      type:        r.type as MatchEvent['type'],
+      label:       r.label,
+      scoringTeam: (r.scoringTeam ?? undefined) as MatchEvent['scoringTeam'],
+      ...(r.data as Record<string, unknown> ?? {}),
+    })),
     homeTeam: {
       id:       match.homeTeam.id,
       name:     match.homeTeam.name,

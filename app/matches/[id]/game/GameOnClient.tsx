@@ -118,6 +118,7 @@ export interface MatchData {
   homeAssistantCoaches: number
   awayAssistantCoaches: number
   kickoffTable: { dieRoll: number; name: string; description: string }[]
+  initialEvents: MatchEvent[]
   homePlayerTypes:   MercPlayerType[]
   awayPlayerTypes:   MercPlayerType[]
   homeJourneymanTypes: JourneymanPlayerType[]
@@ -164,7 +165,7 @@ export interface SpecialPlayCardSlot {
   turn:     number | null
 }
 
-interface MatchEvent {
+export interface MatchEvent {
   id:             string
   type:           'TD' | 'CASUALTY' | 'INTERCEPTION' | 'COMPLETION' | 'HALFTIME' | 'CHEF' | 'SENT_OFF' | 'WEATHER' | 'SPECIAL_CARD' | 'KICKOFF'
   turn?:          number        // which turn (1–16) the event occurred on
@@ -532,7 +533,7 @@ export default function GameOnClient({ matchData }: Props) {
   const defaultState = (): GameState => ({
     phase: matchData.status === 'LIVE' ? 'live' : 'prematch',
     turn:  1,
-    events:          [],
+    events:          matchData.initialEvents,
     mvp:             { home: null, away: null },
     injuryOverrides: {},
     kickingTeam:      null,
@@ -571,11 +572,26 @@ export default function GameOnClient({ matchData }: Props) {
   const [induceTabAway,  setInduceTabAway]      = useState<'stars' | 'mercs' | 'items' | 'cards'>('stars')
   const [openSkillKey,   setOpenSkillKey]       = useState<string | null>(null)
 
-  // Restore from localStorage after mount
+  // Restore same-browser-only fields from localStorage after mount. `events` is deliberately
+  // NOT taken from localStorage — it's seeded from `matchData.initialEvents` (the database's
+  // durable MatchEvent log) in defaultState() above, which is authoritative and, unlike
+  // localStorage, available from any browser/device. Only the fields with no DB backing
+  // (mvp/injuryOverrides are fresh postmatch input anyway; kickingTeam/pendingKickoff have no
+  // persisted representation) still rely on this browser's own history.
   useEffect(() => {
     const saved = localStorage.getItem(`match-${matchData.id}`)
     if (saved) {
-      try { setState(JSON.parse(saved)) } catch {}
+      try {
+        const parsed = JSON.parse(saved) as Partial<GameState>
+        setState((prev) => ({
+          ...prev,
+          mvp:              parsed.mvp              ?? prev.mvp,
+          injuryOverrides:  parsed.injuryOverrides   ?? prev.injuryOverrides,
+          kickingTeam:      parsed.kickingTeam       ?? prev.kickingTeam,
+          firstKickingTeam: parsed.firstKickingTeam  ?? prev.firstKickingTeam,
+          pendingKickoff:   parsed.pendingKickoff    ?? prev.pendingKickoff,
+        }))
+      } catch {}
     }
     setHydrated(true)
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -587,24 +603,6 @@ export default function GameOnClient({ matchData }: Props) {
       localStorage.setItem(`match-${matchData.id}`, JSON.stringify(state))
     }
   }, [state, matchData.id, hydrated])
-
-  // Reflect the Weather roll in the local event log as soon as it's rolled (not just on a
-  // fresh mount) — `rollWeather` already persists the MatchEvent row itself, this is just for
-  // this session's own live display. Guarded by `hydrated` so it runs after any localStorage
-  // restore, and checks for an existing entry so it's safe to re-run on every matchData change.
-  useEffect(() => {
-    if (!hydrated || !matchData.weather) return
-    setState((prev) => {
-      if (prev.events.some((e) => e.id === 'weather')) return prev
-      return {
-        ...prev,
-        events: [
-          { id: 'weather', type: 'WEATHER', label: `🌦️ Weather — ${matchData.weather!.name}: ${matchData.weather!.description}` },
-          ...prev.events,
-        ],
-      }
-    })
-  }, [hydrated, matchData.weather])
 
   // Derived values
   const allPlayers = useMemo(
@@ -694,7 +692,10 @@ export default function GameOnClient({ matchData }: Props) {
 
   function pushEvent(event: MatchEvent) {
     setState((prev) => ({ ...prev, events: [...prev.events, event] }))
-    persistTransition(async () => { await pushMatchEvent(matchData.id, event.type, event.label, event.scoringTeam) })
+    persistTransition(async () => {
+      const { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, interceptorId } = event
+      await pushMatchEvent(matchData.id, { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, interceptorId })
+    })
   }
 
   function undoLast() {

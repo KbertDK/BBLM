@@ -42,11 +42,28 @@ async function resolveMdMatchEventId(type: string): Promise<string | null> {
   return found?.id ?? null
 }
 
-export async function pushMatchEvent(matchId: string, type: string, label: string, scoringTeam?: string) {
+interface PushableMatchEvent {
+  type:           string
+  label:          string
+  scoringTeam?:   string
+  turn?:          number
+  scorerId?:      string
+  passerId?:      string
+  attackerId?:    string
+  victimId?:      string
+  casualtyResult?: string
+  interceptorId?: string
+}
+
+// `data` carries the fields not covered by MatchEvent's own columns (scorerId, attackerId, etc.) —
+// needed to losslessly reconstruct GameOnClient's live state from the DB on any device, not just
+// whichever browser's localStorage happened to be driving the match.
+export async function pushMatchEvent(matchId: string, event: PushableMatchEvent) {
   const session = await requireMatchParticipant(matchId)
   if (!session) return
+  const { type, label, scoringTeam, ...data } = event
   const mdMatchEventId = await resolveMdMatchEventId(type)
-  await prisma.matchEvent.create({ data: { matchId, type, label, scoringTeam: scoringTeam ?? null, mdMatchEventId } })
+  await prisma.matchEvent.create({ data: { matchId, type, label, scoringTeam: scoringTeam ?? null, mdMatchEventId, data } })
   revalidatePath('/')
 }
 
