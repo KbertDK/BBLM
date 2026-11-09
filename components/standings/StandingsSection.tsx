@@ -1,13 +1,18 @@
 import Link from 'next/link'
 import clsx from 'clsx'
 import SectionHeading from '@/components/ui/SectionHeading'
+import SeasonFilterControl from '@/components/standings/SeasonFilterControl'
 import type { TeamStandingRow, PlayerStatRow } from '@/lib/queries/standings'
+import type { SeasonFilterOption } from '@/lib/seasonFilter'
 
 interface Props {
-  teamRows:      TeamStandingRow[]
-  topScorers:    PlayerStatRow[]
-  topCasualties: PlayerStatRow[]
-  topPassers:    PlayerStatRow[]
+  teamRows:       TeamStandingRow[]
+  topScorers:     PlayerStatRow[]
+  topCasualties:  PlayerStatRow[]
+  topPassers:     PlayerStatRow[]
+  seasonOptions:  SeasonFilterOption[]
+  currentSeason:  string
+  activeLeagueId?: string
 }
 
 function RankMedal({ rank }: { rank: number }) {
@@ -25,8 +30,8 @@ function EmptyState({ text }: { text: string }) {
   )
 }
 
-function TeamStandingsTable({ rows }: { rows: TeamStandingRow[] }) {
-  if (rows.length === 0) return <EmptyState text="No active divisions yet." />
+function TeamStandingsTable({ rows, emptyText }: { rows: TeamStandingRow[]; emptyText: string }) {
+  if (rows.length === 0) return <EmptyState text={emptyText} />
   return (
     <div className="bg-bb-dark/50 border border-bb-border rounded-sm p-5 overflow-x-auto">
       <table className="w-full text-sm min-w-[480px]">
@@ -111,12 +116,20 @@ function PlayerLeaderboardTable({
   )
 }
 
-export default function StandingsSection({ teamRows, topScorers, topCasualties, topPassers }: Props) {
+export default function StandingsSection({
+  teamRows, topScorers, topCasualties, topPassers, seasonOptions, currentSeason, activeLeagueId,
+}: Props) {
+  const emptyText =
+    currentSeason === 'closed' ? 'No closed seasons yet.' :
+    currentSeason === 'active' ? 'No active divisions yet.' :
+    'No completed matches for this season yet.'
+
   return (
     <section>
       <SectionHeading title="Standings" subtitle="League rankings & top performers" />
+      <SeasonFilterControl leagueId={activeLeagueId} options={seasonOptions} current={currentSeason} />
       <div className="flex flex-col gap-6">
-        <TeamStandingsTable rows={teamRows} />
+        <TeamStandingsTable rows={teamRows} emptyText={emptyText} />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <PlayerLeaderboardTable title="Top Touchdowns" rows={topScorers} highlight="touchdowns" />
           <PlayerLeaderboardTable title="Top Casualties" rows={topCasualties} highlight="casualties" />

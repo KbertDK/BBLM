@@ -4,6 +4,7 @@ import { getLatestNews } from '@/lib/queries/news'
 import { getUpcomingMatches, getLiveMatches, getLatestResults } from '@/lib/queries/matches'
 import { getTeamsByCoach } from '@/lib/queries/teams'
 import { getHomeStandings } from '@/lib/queries/standings'
+import { parseSeasonMode, getSeasonFilterOptions } from '@/lib/seasonFilter'
 import { getSession } from '@/lib/auth'
 import NewsSection from '@/components/news/NewsSection'
 import MatchesPanel from '@/components/matches/MatchesPanel'
@@ -18,9 +19,10 @@ export const revalidate = 0
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ leagueId?: string }>
+  searchParams: Promise<{ leagueId?: string; season?: string }>
 }) {
-  const { leagueId: paramLeagueId } = await searchParams
+  const { leagueId: paramLeagueId, season: paramSeason } = await searchParams
+  const seasonMode = parseSeasonMode(paramSeason)
   const session = await getSession()
 
   // Resolve active league: URL param → user's primary league → undefined (all)
@@ -33,13 +35,14 @@ export default async function HomePage({
     activeLeagueId = coach?.primaryLeagueId ?? undefined
   }
 
-  const [news, upcoming, live, results, myTeams, standings, leagues] = await Promise.all([
+  const [news, upcoming, live, results, myTeams, standings, seasonOptions, leagues] = await Promise.all([
     getLatestNews(),
     getUpcomingMatches(activeLeagueId),
     getLiveMatches(activeLeagueId),
     getLatestResults(activeLeagueId),
     session ? getTeamsByCoach(session.coachId) : Promise.resolve(null),
-    getHomeStandings(activeLeagueId),
+    getHomeStandings(activeLeagueId, seasonMode),
+    getSeasonFilterOptions(activeLeagueId),
     prisma.league.findMany({
       where:   { isHidden: false },
       orderBy: { createdAt: 'asc' },
@@ -82,6 +85,9 @@ export default async function HomePage({
           topScorers={standings.topScorers}
           topCasualties={standings.topCasualties}
           topPassers={standings.topPassers}
+          seasonOptions={seasonOptions}
+          currentSeason={paramSeason ?? 'active'}
+          activeLeagueId={activeLeagueId}
         />
         <div>
           <NewsSection posts={news} />
