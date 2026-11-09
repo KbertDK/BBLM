@@ -2141,7 +2141,7 @@ export default function GameOnClient({ matchData }: Props) {
 
             {/* Half indicator */}
             <div className="mt-1">
-              <span className="text-[10px] text-bb-muted/60 font-heading uppercase tracking-widest">
+              <span className="text-[10px] text-bb-muted/85 font-heading uppercase tracking-widest">
                 {hasHalftime ? '2nd Half' : '1st Half'}
               </span>
             </div>

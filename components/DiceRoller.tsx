@@ -188,7 +188,7 @@ export default function DiceRoller() {
 
             {/* Numeric dice */}
             <div>
-              <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest mb-2">Numeric</p>
+              <p className="text-[10px] text-bb-muted/80 font-heading uppercase tracking-widest mb-2">Numeric</p>
               <div className="grid grid-cols-5 gap-1.5">
                 {NUMERIC_DICE.map((d) => (
                   <button
@@ -205,7 +205,7 @@ export default function DiceRoller() {
 
             {/* Block dice */}
             <div>
-              <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest mb-2">Block Die</p>
+              <p className="text-[10px] text-bb-muted/80 font-heading uppercase tracking-widest mb-2">Block Die</p>
               <div className="grid grid-cols-3 gap-1.5">
                 {BLOCK_DICE_OPTS.map((d) => (
                   <button
@@ -228,7 +228,7 @@ export default function DiceRoller() {
 
               {!rolling && result?.type === 'numeric' && (
                 <>
-                  <p className="text-[10px] text-bb-muted/40 font-heading uppercase tracking-widest mb-1">{result.label}</p>
+                  <p className="text-[10px] text-bb-muted/70 font-heading uppercase tracking-widest mb-1">{result.label}</p>
                   <div key={animKey} className="flex flex-wrap justify-center gap-3 animate-[td-blast_0.4s_ease-out]">
                     {result.values.map((v, i) => (
                       <span key={i} className="font-heading font-black text-3xl leading-none text-white">{v}</span>
@@ -244,7 +244,7 @@ export default function DiceRoller() {
 
               {!rolling && result?.type === 'block' && (
                 <>
-                  <p className="text-[10px] text-bb-muted/40 font-heading uppercase tracking-widest mb-2">{result.label}</p>
+                  <p className="text-[10px] text-bb-muted/70 font-heading uppercase tracking-widest mb-2">{result.label}</p>
                   <div key={animKey} className="flex flex-wrap justify-center gap-4 animate-[td-blast_0.4s_ease-out]">
                     {result.faces.map((face, i) => (
                       <div key={i} className="flex flex-col items-center gap-1.5">

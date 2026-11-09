@@ -147,7 +147,7 @@ export default async function MatchReportPage({ params }: PageProps) {
             <div className="space-y-2">
               {/* 1st half label (only if there's a halftime event) */}
               {halftimeIdx !== -1 && (
-                <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest mb-1">
+                <p className="text-[10px] text-bb-muted/80 font-heading uppercase tracking-widest mb-1">
                   1st Half
                 </p>
               )}
@@ -162,7 +162,7 @@ export default async function MatchReportPage({ params }: PageProps) {
                     {isHalf ? (
                       <div className="flex items-center gap-3 py-2">
                         <div className="flex-1 h-px bg-bb-border/30" />
-                        <span className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest shrink-0">
+                        <span className="text-[10px] text-bb-muted/80 font-heading uppercase tracking-widest shrink-0">
                           Half Time
                         </span>
                         <div className="flex-1 h-px bg-bb-border/30" />
@@ -176,7 +176,7 @@ export default async function MatchReportPage({ params }: PageProps) {
 
                     {/* "2nd Half" label immediately after the halftime divider */}
                     {showSecondHalfLabel && i < match.events.length - 1 && (
-                      <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest mt-3 mb-1">
+                      <p className="text-[10px] text-bb-muted/80 font-heading uppercase tracking-widest mt-3 mb-1">
                         2nd Half
                       </p>
                     )}
