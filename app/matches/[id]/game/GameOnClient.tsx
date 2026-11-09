@@ -1211,7 +1211,7 @@ export default function GameOnClient({ matchData }: Props) {
                       router.refresh()
                     })}
                     className="px-6 py-2 bg-bb-gold hover:bg-bb-gold-dim text-bb-dark font-heading font-bold tracking-widest uppercase rounded-sm text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                    {wizardPending ? 'Rolling…' : 'Roll'}
+                    {wizardPending ? 'Saving…' : 'Save'}
                   </button>
                 </div>
               </>
