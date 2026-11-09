@@ -3147,7 +3147,7 @@ export default function GameOnClient({ matchData }: Props) {
                   <button disabled={!modal.eventTurn || modal.die1 === '' || modal.die2 === ''}
                     onClick={() => setModal({ ...modal, step: 'resolve' })}
                     className="w-full px-4 py-3 bg-bb-gold text-bb-dark rounded-sm text-sm font-heading uppercase tracking-widest disabled:opacity-40 disabled:cursor-not-allowed">
-                    Roll →
+                    Next →
                   </button>
                 </>
               )
