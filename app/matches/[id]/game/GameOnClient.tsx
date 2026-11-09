@@ -400,14 +400,21 @@ function computePlayerUpdates(
 
 function RosterModal({
   team, players, logo, matchSspMap, onClose,
+  inducements, specialCards, specialPlayDecks, hidden, hiddenSpend,
 }: {
   team:        MatchTeamData
   players:     MatchPlayer[]
   logo:        string | null
   matchSspMap: Map<string, number>
   onClose:     () => void
+  inducements:      PurchasedInducement[]
+  specialCards:     SpecialPlayCardSlot[]
+  specialPlayDecks: SpecialPlayDeck[]
+  hidden:           boolean
+  hiddenSpend:      number | null
 }) {
-  const [openSkill, setOpenSkill] = useState<string | null>(null)
+  const [openSkill,    setOpenSkill]    = useState<string | null>(null)
+  const [openBenefit,  setOpenBenefit]  = useState<string | null>(null)
 
   return (
     <div
@@ -519,6 +526,71 @@ function RosterModal({
               )}
             </div>
           ))}
+
+          {/* Purchased benefits — generic inducements & special play cards bought for this match */}
+          {(inducements.length > 0 || specialCards.length > 0 || hidden) && (
+            <div className="pt-1 border-t border-bb-border/40">
+              <p className="text-xs font-heading uppercase tracking-wider text-bb-gold mb-2">🎁 Purchased Benefits</p>
+              {hidden ? (
+                <p className="text-xs text-bb-muted/70 italic">
+                  🤫 Kept secret until kickoff — {hiddenSpend ?? 0}g committed so far.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {inducements.map((ind) => {
+                    const key    = `ind||${ind.id}`
+                    const isOpen = openBenefit === key
+                    return (
+                      <div key={ind.id} className="border border-bb-border/40 rounded-sm px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm text-white">{ind.name}</span>
+                          <button onClick={() => setOpenBenefit(isOpen ? null : key)}
+                            className="text-[10px] px-1.5 py-1 rounded-sm border border-bb-gold/30 bg-bb-gold/10 text-bb-gold font-heading shrink-0">
+                            {isOpen ? 'Hide Rule' : 'View Rule'}
+                          </button>
+                        </div>
+                        {isOpen && (
+                          <div className="mt-1.5 text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2 whitespace-pre-line">
+                            {ind.rule}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {specialCards.map((slot) => {
+                    const deck    = specialPlayDecks.find((d) => d.id === slot.deckId)
+                    const card    = slot.cardId ? deck?.cards.find((c) => c.id === slot.cardId) ?? null : null
+                    const key     = `card||${slot.id}`
+                    const isOpen  = openBenefit === key
+                    return (
+                      <div key={slot.id} className="border border-bb-border/40 rounded-sm px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm text-white">
+                            🃏 {slot.deckName}
+                            {card && <span className="text-bb-gold"> — {card.name}</span>}
+                          </span>
+                          {card && (
+                            <button onClick={() => setOpenBenefit(isOpen ? null : key)}
+                              className="text-[10px] px-1.5 py-1 rounded-sm border border-bb-gold/30 bg-bb-gold/10 text-bb-gold font-heading shrink-0">
+                              {isOpen ? 'Hide Effect' : 'View Effect'}
+                            </button>
+                          )}
+                        </div>
+                        {!card && (
+                          <p className="text-[11px] text-bb-muted/60 italic mt-1">Not yet drawn</p>
+                        )}
+                        {isOpen && card && (
+                          <div className="mt-1.5 text-[11px] text-bb-muted/90 leading-relaxed bg-bb-darker border border-bb-border/40 rounded-sm px-3 py-2 whitespace-pre-line">
+                            <span className="text-bb-gold/70">{card.timing}</span> — {card.effect || card.description}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1402,7 +1474,9 @@ export default function GameOnClient({ matchData }: Props) {
                       {team.players.map((p) => (
                         <div key={p.id}
                           className={`flex items-center gap-3 p-2 rounded-sm ${p.status === 'MNG' ? 'opacity-40' : ''}`}>
-                          {p.isMerc
+                          {p.isStarPlayer
+                            ? <span className="text-[10px] bg-bb-gold/20 text-bb-gold border border-bb-gold/30 px-1.5 py-0.5 rounded-sm font-heading shrink-0">STAR</span>
+                            : p.isMerc
                             ? <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-700/40 px-1.5 py-0.5 rounded-sm font-heading shrink-0">MERC</span>
                             : p.isJourneyman
                               ? (
@@ -2039,6 +2113,11 @@ export default function GameOnClient({ matchData }: Props) {
             players={rosterSide === 'home' ? matchData.homeTeam.players : matchData.awayTeam.players}
             logo={rosterSide === 'home' ? homeLogo : awayLogo}
             matchSspMap={matchSspMap}
+            inducements={rosterSide === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased}
+            specialCards={rosterSide === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards}
+            specialPlayDecks={matchData.specialPlayDecks}
+            hidden={matchData.redactedSide === rosterSide}
+            hiddenSpend={rosterSide === 'home' ? matchData.homeHiddenSpend : matchData.awayHiddenSpend}
             onClose={() => setRosterSide(null)}
           />
         )}
@@ -3424,6 +3503,11 @@ export default function GameOnClient({ matchData }: Props) {
             players={rosterSide === 'home' ? homePlaying : awayPlaying}
             logo={rosterSide === 'home' ? homeLogo : awayLogo}
             matchSspMap={matchSspMap}
+            inducements={rosterSide === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased}
+            specialCards={rosterSide === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards}
+            specialPlayDecks={matchData.specialPlayDecks}
+            hidden={matchData.redactedSide === rosterSide}
+            hiddenSpend={rosterSide === 'home' ? matchData.homeHiddenSpend : matchData.awayHiddenSpend}
             onClose={() => setRosterSide(null)}
           />
         )}
@@ -3757,6 +3841,11 @@ export default function GameOnClient({ matchData }: Props) {
           players={rosterSide === 'home' ? homePlaying : awayPlaying}
           logo={rosterSide === 'home' ? homeLogo : awayLogo}
           matchSspMap={matchSspMap}
+          inducements={rosterSide === 'home' ? matchData.homeInducementsPurchased : matchData.awayInducementsPurchased}
+          specialCards={rosterSide === 'home' ? matchData.homeSpecialPlayCards : matchData.awaySpecialPlayCards}
+          specialPlayDecks={matchData.specialPlayDecks}
+          hidden={matchData.redactedSide === rosterSide}
+          hiddenSpend={rosterSide === 'home' ? matchData.homeHiddenSpend : matchData.awayHiddenSpend}
           onClose={() => setRosterSide(null)}
         />
       )}
