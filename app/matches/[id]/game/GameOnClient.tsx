@@ -1184,14 +1184,16 @@ export default function GameOnClient({ matchData }: Props) {
               <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
               <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Wizard</h1>
             </div>
-            <button
-              type="button"
-              onClick={handleResetPrematch}
-              disabled={wizardPending}
-              className="text-xs font-medium uppercase tracking-widest px-3 py-1.5 rounded-sm border border-bb-crimson/40 text-bb-crimson-bright hover:bg-bb-crimson/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-            >
-              Reset Pre-Match Setup
-            </button>
+            {matchData.status === 'SCHEDULED' && (
+              <button
+                type="button"
+                onClick={handleResetPrematch}
+                disabled={wizardPending}
+                className="text-xs font-medium uppercase tracking-widest px-3 py-1.5 rounded-sm border border-bb-crimson/40 text-bb-crimson-bright hover:bg-bb-crimson/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              >
+                Reset Pre-Match Setup
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap gap-2 mt-3">
             {(['weather', 'petty-gold', 'lineup', 'inducements', 'fans'] as const).map((s, i, arr) => (

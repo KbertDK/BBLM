@@ -414,9 +414,10 @@ export async function resetPrematchPhase(matchId: string) {
 
   const match = await prisma.match.findUnique({
     where:  { id: matchId },
-    select: { homeTeamId: true, awayTeamId: true, homePettyCash: true, awayPettyCash: true },
+    select: { status: true, homeTeamId: true, awayTeamId: true, homePettyCash: true, awayPettyCash: true },
   })
   if (!match) return
+  if (match.status !== 'SCHEDULED') return
 
   const realEvents = await prisma.matchEvent.count({ where: { matchId, type: { not: 'WEATHER' } } })
   if (realEvents > 0) return
