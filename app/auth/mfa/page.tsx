@@ -1,10 +1,13 @@
 'use client'
 
-import { useActionState } from 'react'
+import { Suspense, useActionState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { verifyMfaAction } from './actions'
 
-export default function MfaPage() {
+function MfaForm() {
   const [state, action, pending] = useActionState(verifyMfaAction, null)
+  const searchParams = useSearchParams()
+  const redirectTo = searchParams.get('redirect') ?? ''
 
   return (
     <div className="min-h-screen bg-bb-navy flex items-center justify-center px-4">
@@ -19,6 +22,7 @@ export default function MfaPage() {
         </div>
 
         <form action={action} className="bg-bb-dark border border-bb-border rounded-sm p-6 space-y-4">
+          <input type="hidden" name="redirect" value={redirectTo} />
           <div className="space-y-1.5">
             <label className="block text-xs font-medium uppercase tracking-widest text-bb-muted">
               Authenticator Code
@@ -57,5 +61,13 @@ export default function MfaPage() {
         </form>
       </div>
     </div>
+  )
+}
+
+export default function MfaPage() {
+  return (
+    <Suspense fallback={null}>
+      <MfaForm />
+    </Suspense>
   )
 }

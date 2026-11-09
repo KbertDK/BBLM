@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import prisma from '@/lib/prisma'
-import { createSession, createPendingMfaSession, destroySession, verifyPassword } from '@/lib/auth'
+import { createSession, createPendingMfaSession, destroySession, verifyPassword, safeRedirectPath } from '@/lib/auth'
 
 export interface LoginState {
   error: string
@@ -12,8 +12,9 @@ export async function loginAction(
   _prevState: LoginState | null,
   formData: FormData,
 ): Promise<LoginState | null> {
-  const email    = (formData.get('email')    as string | null)?.trim().toLowerCase() ?? ''
-  const password = (formData.get('password') as string | null) ?? ''
+  const email      = (formData.get('email')    as string | null)?.trim().toLowerCase() ?? ''
+  const password   = (formData.get('password') as string | null) ?? ''
+  const redirectTo = safeRedirectPath(formData.get('redirect') as string | null)
 
   const coach = await prisma.coach.findUnique({
     where:  { email },
@@ -33,11 +34,11 @@ export async function loginAction(
 
   if (coach.mfaEnabled) {
     await createPendingMfaSession(coach.id)
-    redirect('/auth/mfa')
+    redirect(`/auth/mfa?redirect=${encodeURIComponent(redirectTo)}`)
   }
 
   await createSession({ coachId: coach.id, name: coach.name, alias: coach.alias, email: coach.email, role: coach.role })
-  redirect('/')
+  redirect(redirectTo)
 }
 
 export async function logoutAction(): Promise<void> {

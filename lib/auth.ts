@@ -67,6 +67,15 @@ export async function destroySession(): Promise<void> {
   cookieStore.delete(COOKIE_NAME)
 }
 
+// Validates a `?redirect=` target before using it for a post-login redirect — the value is
+// attacker-reachable via a crafted link regardless of middleware, so only a same-origin
+// relative path is ever allowed; anything else (an absolute URL, a protocol-relative
+// `//host` path, or nothing at all) falls back to the homepage.
+export function safeRedirectPath(path: string | null | undefined): string {
+  if (!path || !path.startsWith('/') || path.startsWith('//')) return '/'
+  return path
+}
+
 // ── Pending MFA cookie (short-lived, set after password OK, before TOTP verified) ──
 
 const MFA_COOKIE = 'bb_mfa_pending'
