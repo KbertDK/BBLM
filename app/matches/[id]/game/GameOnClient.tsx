@@ -1107,15 +1107,17 @@ export default function GameOnClient({ matchData }: Props) {
 
   // ── Modal overlay ─────────────────────────────────────────────────────────
 
-  function ModalOverlay({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  function ModalOverlay({ title, onClose, hideClose, children }: { title: string; onClose: () => void; hideClose?: boolean; children: React.ReactNode }) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-           onClick={onClose}>
+           onClick={hideClose ? undefined : onClose}>
         <div className="w-full max-w-md bg-bb-dark border border-bb-gold/30 rounded-sm shadow-2xl"
              onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between px-5 py-4 border-b border-bb-border">
             <h3 className="font-heading text-lg font-bold text-bb-gold">{title}</h3>
-            <button onClick={onClose} className="text-bb-muted hover:text-white transition-colors">✕</button>
+            {!hideClose && (
+              <button onClick={onClose} className="text-bb-muted hover:text-white transition-colors">✕</button>
+            )}
           </div>
           <div className="px-5 py-5 space-y-4">
             {children}
@@ -3034,7 +3036,17 @@ export default function GameOnClient({ matchData }: Props) {
         )}
 
         {modal?.type === 'kickoff' && (
-          <ModalOverlay title="Kick-Off" onClose={() => {}}>
+          <ModalOverlay title="Kick-Off" onClose={() => {}} hideClose>
+            <div className="flex justify-end -mt-2 -mb-1">
+              <button
+                type="button"
+                onClick={() => { setModal(null); setState((prev) => ({ ...prev, pendingKickoff: false })) }}
+                className="text-[11px] text-bb-muted/60 hover:text-bb-crimson transition-colors"
+              >
+                Cancel — resolve this kick-off later
+              </button>
+            </div>
+
             {modal.step === 'confirmNeeded' && (
               <>
                 <p className="text-bb-muted text-sm">Touchdown recorded. Are there still turns remaining in this half?</p>
