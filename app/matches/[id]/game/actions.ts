@@ -536,6 +536,7 @@ export async function completeMatchFull(formData: FormData) {
       awayPettyCash:  true,
       homeTeam: {
         select: {
+          coachId: true,
           name: true, rerolls: true, assistantCoaches: true, cheerleaders: true, fanFactor: true, apothecary: true,
           race:    { select: { rerollPrice: true } },
           players: { where: { status: 'ACTIVE' }, select: { status: true, value: true, playerType: { select: { cost: true } } } },
@@ -543,6 +544,7 @@ export async function completeMatchFull(formData: FormData) {
       },
       awayTeam: {
         select: {
+          coachId: true,
           name: true, rerolls: true, assistantCoaches: true, cheerleaders: true, fanFactor: true, apothecary: true,
           race:    { select: { rerollPrice: true } },
           players: { where: { status: 'ACTIVE' }, select: { status: true, value: true, playerType: { select: { cost: true } } } },
@@ -818,5 +820,6 @@ export async function completeMatchFull(formData: FormData) {
   revalidatePath(`/teams/${match.homeTeamId}`)
   revalidatePath(`/teams/${match.awayTeamId}`)
 
-  redirect(`/teams/${match.homeTeamId}`)
+  const viewerSide = resolveViewerSide(session, match)
+  redirect(`/teams/${viewerSide === 'away' ? match.awayTeamId : match.homeTeamId}`)
 }
