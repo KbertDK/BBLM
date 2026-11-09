@@ -9,9 +9,10 @@ export interface NewsPostSummary {
 }
 
 export interface MatchEventSummary {
-  id:    string
-  type:  string
-  label: string
+  id:              string
+  type:            string
+  label:           string
+  casualtyResult?: string | null
 }
 
 export interface MatchSummary {

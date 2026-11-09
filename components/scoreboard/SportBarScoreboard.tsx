@@ -274,7 +274,7 @@ export default function SportBarScoreboard({ initialMatches }: Props) {
       const currCas   = (base.homeCasScore + base.awayCasScore) - currKills
 
       if (currKills > (prevKillsRef.current.get(m.id) ?? 0)) {
-        const ev = m.recentEvents?.find((e) => e.type === 'CASUALTY' && e.label.endsWith('[DEAD]'))
+        const ev = m.recentEvents?.find((e) => e.type === 'CASUALTY' && e.casualtyResult === 'DEAD')
         detected = { kind: 'KILL', eventLabel: ev?.label ?? 'A player has been slain!', ...base }
         break
       }
@@ -284,9 +284,7 @@ export default function SportBarScoreboard({ initialMatches }: Props) {
         break
       }
       if (currCas > (prevCasRef.current.get(m.id) ?? 0)) {
-        const ev = m.recentEvents?.find(
-          (e) => e.type === 'CASUALTY' && !e.label.endsWith('[KO]') && !e.label.endsWith('[DEAD]')
-        )
+        const ev = m.recentEvents?.find((e) => e.type === 'CASUALTY' && e.casualtyResult !== 'DEAD')
         detected = { kind: 'CAS', eventLabel: ev?.label ?? 'CASUALTY!', ...base }
         break
       }

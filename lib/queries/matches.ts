@@ -33,14 +33,29 @@ export async function getLiveMatches(leagueId?: string): Promise<MatchSummary[]>
       ...matchInclude,
       events: {
         orderBy: { createdAt: 'desc' },
-        select:  { id: true, type: true, label: true, scoringTeam: true },
+        select:  { id: true, type: true, label: true, scoringTeam: true, data: true },
       },
     },
   })
 
+  // Deaths/casualties are read from the event's structured `data.casualtyResult` (set by
+  // pushMatchEvent for every CASUALTY event) whenever it's present — never from an `endsWith`
+  // suffix check on the human-readable label, which used to silently undercount kills whenever
+  // a medical-save note ("— saved by …") was appended after the "[DEAD]" tag. Events predating
+  // the `data` column (so `data` is null) fall back to searching the label for the bracketed
+  // result anywhere in the string, not just at the end, for the same reason.
+  const casualtyResultOf = (data: unknown, label: string): string | null => {
+    const fromData = (data as { casualtyResult?: string } | null)?.casualtyResult
+    if (fromData) return fromData
+    return label.match(/\[(BH|MNG|NIGGLING|DEAD)\]/)?.[1] ?? null
+  }
+
   return matches.map((m) => {
-    const cas   = m.events.filter((e) => e.type === 'CASUALTY' && !e.label.endsWith('[KO]'))
-    const kills = m.events.filter((e) => e.type === 'CASUALTY' && e.label.endsWith('[DEAD]'))
+    const cas   = m.events.filter((e) => e.type === 'CASUALTY')
+    const kills = cas.filter((e) => casualtyResultOf(e.data, e.label) === 'DEAD')
+    const toSummary = (e: (typeof m.events)[number]) => ({
+      id: e.id, type: e.type, label: e.label, casualtyResult: casualtyResultOf(e.data, e.label),
+    })
     return {
       id:            m.id,
       round:         m.round,
@@ -49,8 +64,8 @@ export async function getLiveMatches(leagueId?: string): Promise<MatchSummary[]>
       scheduledAt:   m.scheduledAt,
       homeScore:     m.events.filter((e) => e.type === 'TD' && e.scoringTeam === 'home').length,
       awayScore:     m.events.filter((e) => e.type === 'TD' && e.scoringTeam === 'away').length,
-      recentEvents:  m.events.slice(0, 3),
-      allEvents:     [...m.events].reverse(), // chronological order for the ticker
+      recentEvents:  m.events.slice(0, 3).map(toSummary),
+      allEvents:     [...m.events].reverse().map(toSummary), // chronological order for the ticker
       homeCasScore:  cas.filter((e)   => e.scoringTeam === 'home').length,
       awayCasScore:  cas.filter((e)   => e.scoringTeam === 'away').length,
       homeKillScore: kills.filter((e) => e.scoringTeam === 'home').length,
