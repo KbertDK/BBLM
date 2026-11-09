@@ -8,6 +8,7 @@ import prisma from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { skillRollsAvailable, improvementOptions, canIncreaseStat, VALUE_MODIFIERS, type StatName } from '@/lib/ssp'
 import { hasActiveMatch } from '@/lib/matchLock'
+import { generateTeamName, generatePlayerNames } from '@/lib/nameGen'
 
 async function requireOwner(teamId: string) {
   const session = await getSession()
@@ -737,4 +738,66 @@ export async function uploadTeamLogo(formData: FormData): Promise<{ error?: stri
   await prisma.team.update({ where: { id: teamId }, data: { logoUrl: `/team-logos/${filename}` } })
 
   revalidatePath(`/teams/${teamId}`)
+}
+
+// ── AI name generation ─────────────────────────────────────────────────────────
+
+export async function generateTeamNameSuggestion(teamId: string): Promise<{ name: string } | { error: string }> {
+  const ctx = await requireOwner(teamId)
+  if (!ctx) return { error: 'Unauthorized' }
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { race: { select: { name: true } } },
+  })
+  if (!team) return { error: 'Team not found' }
+
+  const name = await generateTeamName(team.race.name)
+  if (!name) return { error: 'Could not generate a name right now — try again in a moment.' }
+
+  return { name }
+}
+
+export async function applyGeneratedTeamName(teamId: string, name: string): Promise<{ error?: string } | void> {
+  const ctx = await requireOwner(teamId)
+  if (!ctx) return { error: 'Unauthorized' }
+
+  const trimmed = name.trim()
+  if (!trimmed) return { error: 'Empty name' }
+
+  await prisma.team.update({ where: { id: teamId }, data: { name: trimmed } })
+  revalidatePath(`/teams/${teamId}`)
+}
+
+export async function generateMissingPlayerNames(teamId: string): Promise<{ count: number } | { error: string }> {
+  const ctx = await requireOwner(teamId)
+  if (!ctx) return { error: 'Unauthorized' }
+
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: {
+      name: true,
+      race: { select: { name: true } },
+      players: {
+        where:  { status: { in: ['ACTIVE', 'MNG'] }, name: null },
+        select: { id: true, playerType: { select: { name: true } } },
+      },
+    },
+  })
+  if (!team) return { error: 'Team not found' }
+  if (team.players.length === 0) return { count: 0 }
+
+  const names = await generatePlayerNames({
+    teamName:  team.name,
+    raceName:  team.race.name,
+    positions: team.players.map((p) => p.playerType.name),
+  })
+  if (!names) return { error: 'Could not generate names right now — try again in a moment.' }
+
+  await prisma.$transaction(
+    team.players.map((p, i) => prisma.teamPlayer.update({ where: { id: p.id }, data: { name: names[i] } }))
+  )
+
+  revalidatePath(`/teams/${teamId}`)
+  return { count: team.players.length }
 }

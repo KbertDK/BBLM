@@ -14,6 +14,8 @@ import { getTeamNews } from '@/lib/queries/news'
 import { skillRollsAvailable, improvementOptions, canIncreaseStat } from '@/lib/ssp'
 import PlayerHistoryModal from './PlayerHistoryModal'
 import LogoUpload from './LogoUpload'
+import AiTeamNameButton from './AiTeamNameButton'
+import AiRosterNamesButton from './AiRosterNamesButton'
 import { getTeamLogo } from '@/lib/team-logo'
 
 export const dynamic = 'force-dynamic'
@@ -261,9 +263,12 @@ export default async function TeamPage({ params, searchParams }: Props) {
         {/* ── Team header ── */}
         <div className="mb-8 flex flex-col sm:flex-row items-start gap-4 sm:gap-8">
           <div className="flex-1 min-w-0">
-            <h1 className="font-heading text-4xl font-black text-bb-gold tracking-widest uppercase mb-3">
-              {team.name}
-            </h1>
+            <div className="flex items-center gap-2.5 mb-3 flex-wrap">
+              <h1 className="font-heading text-4xl font-black text-bb-gold tracking-widest uppercase">
+                {team.name}
+              </h1>
+              {isOwner && <AiTeamNameButton teamId={team.id} />}
+            </div>
 
             <div className="flex flex-wrap gap-2 mb-5 text-xs">
               {!team.isActive && (
@@ -593,7 +598,12 @@ export default async function TeamPage({ params, searchParams }: Props) {
 
             {/* Roster table */}
             <section className="mb-14">
-              <SectionRule title="Roster" right={`${living.length} / ${maxSlots} slots`} />
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <SectionRule title="Roster" right={`${living.length} / ${maxSlots} slots`} />
+                </div>
+                {isOwner && <AiRosterNamesButton teamId={team.id} />}
+              </div>
 
               <div className="overflow-x-auto rounded-sm">
                 <table className="w-full min-w-[1100px] bg-bb-dark border border-bb-gold/20 shadow-xl shadow-black/50">
