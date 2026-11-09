@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc, hireStarPlayer, removeStarPlayer, hireJourneyman, removeJourneyman, updateJourneymanNumber, hireInducement, removeInducement, markInducementUsed, markApothecaryUsed, rollWeather, commitPettyCash, saveFansAndFame, buySpecialPlayCard, removeSpecialPlayCard, registerSpecialPlayCard, rollKickoff } from './actions'
+import { startMatch, completeMatchFull, pushMatchEvent, deleteLastMatchEvent, savePrematchData, hireMerc, removeMerc, hireStarPlayer, removeStarPlayer, hireJourneyman, removeJourneyman, updateJourneymanNumber, hireInducement, removeInducement, markInducementUsed, markApothecaryUsed, rollWeather, commitPettyCash, saveFansAndFame, buySpecialPlayCard, removeSpecialPlayCard, registerSpecialPlayCard, rollKickoff, resetPrematchPhase } from './actions'
 import { getTeamLogo } from '@/lib/team-logo'
 import { getSspInfo } from '@/lib/ssp'
 import { spirallingExpenseFor } from '@/lib/spirallingExpenses'
@@ -1155,12 +1155,37 @@ export default function GameOnClient({ matchData }: Props) {
       })
     }
 
+    function handleResetPrematch() {
+      if (!window.confirm(
+        'Reset the entire pre-match setup? This refunds any committed petty cash, removes all ' +
+        'hired mercs/star players/inducements/special play cards, and clears weather and fans/FAME ' +
+        '— the match returns to Scheduled so the wizard can be run again from Weather. This cannot be undone.'
+      )) return
+
+      startWizardTransition(async () => {
+        await resetPrematchPhase(matchData.id)
+        window.location.reload()
+      })
+    }
+
     return (
       <div className="min-h-screen bg-bb-darker text-white flex flex-col">
         {/* Header */}
         <div className="bg-bb-dark border-b border-bb-border px-6 py-4">
-          <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
-          <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Wizard</h1>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <span className="text-xs text-bb-gold/60 font-heading uppercase tracking-widest">Round {matchData.round}</span>
+              <h1 className="font-heading text-2xl font-black text-white mt-0.5">Pre-Match Wizard</h1>
+            </div>
+            <button
+              type="button"
+              onClick={handleResetPrematch}
+              disabled={wizardPending}
+              className="text-xs font-medium uppercase tracking-widest px-3 py-1.5 rounded-sm border border-bb-crimson/40 text-bb-crimson-bright hover:bg-bb-crimson/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              Reset Pre-Match Setup
+            </button>
+          </div>
           <div className="flex flex-wrap gap-2 mt-3">
             {(['weather', 'petty-gold', 'lineup', 'inducements', 'fans'] as const).map((s, i, arr) => (
               <div key={s} className="flex items-center gap-2">
@@ -1989,6 +2014,21 @@ export default function GameOnClient({ matchData }: Props) {
 
     return (
       <div className="min-h-screen bg-bb-darker text-white flex flex-col">
+        {/* Non-sticky link back into the pre-match wizard — all its own data is already
+            persisted, so this is purely a client-side phase flip, no server action needed. */}
+        <div className="bg-bb-darker px-4 sm:px-6 py-1.5 border-b border-bb-border/40">
+          <button
+            type="button"
+            onClick={() => {
+              setState((prev) => ({ ...prev, phase: 'prematch' }))
+              setWizardStep('fans')
+            }}
+            className="text-[11px] text-bb-muted/60 hover:text-bb-gold transition-colors"
+          >
+            ← Review pre-match setup
+          </button>
+        </div>
+
         {/* Sticky scoreboard header */}
         <div className="sticky top-0 z-10 bg-bb-dark border-b border-bb-border px-4 sm:px-6 py-3 flex items-center gap-3">
           {homeLogo && (

@@ -372,6 +372,51 @@ export async function startMatch(matchId: string) {
   revalidatePath('/league-management')
 }
 
+// Undoes everything done in the pre-match wizard (weather, petty cash, hired mercs/star
+// players/inducements/special cards, fans/FAME) and returns the match to SCHEDULED so the
+// wizard can be run again from Weather. Refunding exactly homePettyCash/awayPettyCash back to
+// treasury is sufficient — match-day purchases only ever spend against that committed pool,
+// never Team.treasury directly (only commitPettyCash itself touches treasury).
+// Refuses once any real gameplay has been logged (anything beyond the WEATHER event) — this is
+// a pre-match-only reset, not a whole-match undo.
+export async function resetPrematchPhase(matchId: string) {
+  const session = await requireMatchParticipant(matchId)
+  if (!session) return
+
+  const match = await prisma.match.findUnique({
+    where:  { id: matchId },
+    select: { homeTeamId: true, awayTeamId: true, homePettyCash: true, awayPettyCash: true },
+  })
+  if (!match) return
+
+  const realEvents = await prisma.matchEvent.count({ where: { matchId, type: { not: 'WEATHER' } } })
+  if (realEvents > 0) return
+
+  await prisma.$transaction([
+    prisma.team.update({ where: { id: match.homeTeamId }, data: { treasury: { increment: match.homePettyCash } } }),
+    prisma.team.update({ where: { id: match.awayTeamId }, data: { treasury: { increment: match.awayPettyCash } } }),
+    prisma.matchMerc.deleteMany({ where: { matchId } }),
+    prisma.matchStarPlayer.deleteMany({ where: { matchId } }),
+    prisma.matchJourneyman.deleteMany({ where: { matchId } }),
+    prisma.matchInducement.deleteMany({ where: { matchId } }),
+    prisma.matchSpecialPlayCard.deleteMany({ where: { matchId } }),
+    prisma.matchEvent.deleteMany({ where: { matchId, type: 'WEATHER' } }),
+    prisma.match.update({
+      where: { id: matchId },
+      data: {
+        status: 'SCHEDULED', weatherMdMatchEventId: null,
+        homePettyCash: 0, awayPettyCash: 0,
+        homeFans: null, awayFans: null, homeFame: null, awayFame: null,
+        homeTeamValue: null, awayTeamValue: null, homeTeamFanFactor: null, awayTeamFanFactor: null,
+      },
+    }),
+  ])
+
+  revalidatePath(`/matches/${matchId}/game`)
+  revalidatePath('/')
+  revalidatePath('/league-management')
+}
+
 interface PlayerUpdate {
   playerId:              string
   deltaTouchdowns:       number
