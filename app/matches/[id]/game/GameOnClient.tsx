@@ -2175,7 +2175,7 @@ export default function GameOnClient({ matchData }: Props) {
         <div className="flex-1 flex flex-col md:grid md:grid-cols-[280px_1fr] overflow-hidden">
           {/* Left: action buttons */}
           <div className="border-r border-bb-border p-4 flex flex-col gap-3 overflow-y-auto">
-            <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest mb-1">Record Event</p>
+            <p className="text-[10px] text-bb-muted/80 font-heading uppercase tracking-widest mb-1">Record Event</p>
 
             <button onClick={() => setModal({ type: 'td', step: 0, eventTurn: null, team: null, scorerId: null, hasPass: false, passerId: null })}
               className={btnCrimson}>
@@ -2250,7 +2250,7 @@ export default function GameOnClient({ matchData }: Props) {
           {/* Right: event log */}
           <div className="flex flex-col overflow-hidden">
             <div className="px-5 py-3 border-b border-bb-border flex items-center justify-between shrink-0">
-              <p className="text-[10px] text-bb-muted/50 font-heading uppercase tracking-widest">Match Log</p>
+              <p className="text-[10px] text-bb-muted/80 font-heading uppercase tracking-widest">Match Log</p>
               {state.events.length > 0 && (
                 <button onClick={undoLast}
                   className="text-[10px] text-bb-muted hover:text-bb-crimson transition-colors font-heading uppercase tracking-widest">
