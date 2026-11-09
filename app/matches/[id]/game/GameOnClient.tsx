@@ -184,6 +184,7 @@ export interface MatchEvent {
   attackerId?:    string
   victimId?:      string
   casualtyResult?: CasualtyResult
+  medicalLabel?:  string        // set when a medical option (apothecary/Igor/etc.) was used on this casualty
   // INTERCEPTION
   interceptorId?: string
   label:          string
@@ -700,8 +701,8 @@ export default function GameOnClient({ matchData }: Props) {
   function pushEvent(event: MatchEvent) {
     setState((prev) => ({ ...prev, events: [...prev.events, event] }))
     persistTransition(async () => {
-      const { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, interceptorId } = event
-      await pushMatchEvent(matchData.id, { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, interceptorId })
+      const { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, medicalLabel, interceptorId } = event
+      await pushMatchEvent(matchData.id, { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, medicalLabel, interceptorId })
     })
   }
 
@@ -944,7 +945,7 @@ export default function GameOnClient({ matchData }: Props) {
     const atkTeam  = attackTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
     const medicalNote = medical ? ` — saved by ${medical.label}` : ''
     const label    = `T${eventTurn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]${medicalNote}`
-    pushEvent({ id: uid(), type: 'CASUALTY', turn: eventTurn, scoringTeam: attackTeam, attackerId, victimId, casualtyResult: result, label })
+    pushEvent({ id: uid(), type: 'CASUALTY', turn: eventTurn, scoringTeam: attackTeam, attackerId, victimId, casualtyResult: result, medicalLabel: medical?.label, label })
     if (medical) {
       const victimSide = playerTeam.get(victimId)
       startMercTransition(async () => {
@@ -1068,17 +1069,17 @@ export default function GameOnClient({ matchData }: Props) {
   // ── Injury victims for Post-Match review ──────────────────────────────────
 
   const injuredPlayers = useMemo(() => {
-    const victims = new Map<string, CasualtyResult>()
+    const victims = new Map<string, { cas: CasualtyResult; medicalLabel?: string }>()
     for (const e of state.events) {
       if (e.type === 'CASUALTY' && e.victimId && e.casualtyResult && e.casualtyResult !== 'KO') {
         const existing = victims.get(e.victimId)
-        if (!existing || CAS_SEVERITY[e.casualtyResult] > CAS_SEVERITY[existing]) {
-          victims.set(e.victimId, e.casualtyResult)
+        if (!existing || CAS_SEVERITY[e.casualtyResult] > CAS_SEVERITY[existing.cas]) {
+          victims.set(e.victimId, { cas: e.casualtyResult, medicalLabel: e.medicalLabel })
         }
       }
     }
     return [...victims.entries()]
-      .map(([id, cas]) => ({ player: playerById.get(id)!, cas }))
+      .map(([id, v]) => ({ player: playerById.get(id)!, cas: v.cas, medicalLabel: v.medicalLabel }))
       .filter((x) => x.player)
   }, [state.events, playerById])
 
@@ -3505,12 +3506,17 @@ export default function GameOnClient({ matchData }: Props) {
             </h2>
             <p className="text-xs text-bb-muted mb-4">Confirm or correct the lasting injury status for each player.</p>
             <div className="space-y-2">
-              {injuredPlayers.map(({ player, cas }) => {
+              {injuredPlayers.map(({ player, cas, medicalLabel }) => {
                 const override  = state.injuryOverrides[player.id]
-                const effective = override ?? cas
+                const effective = override ?? (medicalLabel ? 'BH' : cas)
                 return (
                   <div key={player.id} className="flex items-center gap-3 p-3 bg-bb-darker rounded-sm">
-                    <span className="flex-1 text-sm text-white">{playerLabelFull(player)}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm text-white">{playerLabelFull(player)}</span>
+                      {medicalLabel && (
+                        <p className="text-[10px] text-bb-gold/70 mt-0.5">🩹 Saved by {medicalLabel} — confirm below</p>
+                      )}
+                    </div>
                     <select
                       value={effective}
                       onChange={(e) => {
