@@ -308,11 +308,11 @@ export default function SportBarScoreboard({ initialMatches }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMatches])
 
-  // Auto-dismiss after 5s
+  // Auto-dismiss after 7.3s
   useEffect(() => {
     if (!flash) return
-    const fade = setTimeout(() => setFading(true),  4_500)
-    const hide = setTimeout(() => { setFlash(null); setFading(false) }, 5_000)
+    const fade = setTimeout(() => setFading(true),  6_500)
+    const hide = setTimeout(() => { setFlash(null); setFading(false) }, 7_300)
     return () => { clearTimeout(fade); clearTimeout(hide) }
   }, [flash])
 
@@ -500,7 +500,7 @@ function EventOverlay({ flash, fading, onDismiss }: {
   return (
     <div
       className="absolute inset-0 z-[99999] flex flex-col items-center justify-center cursor-pointer select-none"
-      style={{ background: cfg.bg, animation: fading ? 'td-fade-out 0.5s ease-in forwards' : undefined }}
+      style={{ background: cfg.bg, animation: fading ? 'td-fade-out 0.8s ease-in forwards' : undefined }}
       onClick={onDismiss}
     >
       {/* Pulsing ring */}
@@ -514,7 +514,7 @@ function EventOverlay({ flash, fading, onDismiss }: {
       {/* Content */}
       <div
         className="relative text-center px-8 max-w-3xl"
-        style={{ animation: 'td-blast 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards' }}
+        style={{ animation: 'td-blast 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards' }}
       >
         <div className="text-7xl md:text-8xl mb-3">{cfg.emoji}</div>
 
