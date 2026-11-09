@@ -13,6 +13,7 @@ import prisma from '@/lib/prisma'
 import { getTeamNews } from '@/lib/queries/news'
 import { skillRollsAvailable, improvementOptions, canIncreaseStat } from '@/lib/ssp'
 import PlayerHistoryModal from './PlayerHistoryModal'
+import SkillPickerModal from './SkillPickerModal'
 import LogoUpload from './LogoUpload'
 import AiTeamNameButton from './AiTeamNameButton'
 import AiRosterNamesButton from './AiRosterNamesButton'
@@ -143,7 +144,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
 
   let playerTypes: { id: string; name: string; cost: number; maxCount: number }[] = []
   let teamNews: Awaited<ReturnType<typeof getTeamNews>> = []
-  let allSkills: { id: string; name: string; category: string }[] = []
+  let allSkills: { id: string; name: string; category: string; skillRule: string }[] = []
   let pendingJourneymen: Awaited<ReturnType<typeof getPendingJourneymen>> = []
   let completedMatches: Awaited<ReturnType<typeof getTeamCompletedMatches>> = []
 
@@ -160,7 +161,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
       ;[allSkills, pendingJourneymen] = await Promise.all([
         prisma.skill.findMany({
           orderBy: { name: 'asc' },
-          select:  { id: true, name: true, category: true },
+          select:  { id: true, name: true, category: true, skillRule: true },
         }),
         getPendingJourneymen(team.id),
       ])
@@ -690,7 +691,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                                     </select>
                                     <button type="submit"
                                       className="px-2 py-0.5 rounded-sm border border-bb-gold/50 text-bb-gold text-[10px] font-heading uppercase hover:bg-bb-gold hover:text-bb-dark transition-colors">
-                                      Roll
+                                      Save
                                     </button>
                                   </form>
                                 </details>
@@ -715,26 +716,7 @@ export default async function TeamPage({ params, searchParams }: Props) {
                                     <summary className="cursor-pointer text-bb-gold hover:text-bb-gold-dim font-heading uppercase tracking-wider text-[10px]">
                                       🎯 Pick Skill ({roll.die1}+{roll.die2}{isDouble ? ', doubles!' : ''})
                                     </summary>
-                                    <form action={pickSkill} className="mt-1 flex items-center gap-1">
-                                      <input type="hidden" name="rollId" value={roll.id} />
-                                      <select name="skillId" defaultValue="" required
-                                        className="bg-bb-darker border border-bb-border rounded-sm px-1 py-0.5 text-xs text-white max-w-[10rem]">
-                                        <option value="" disabled>Select skill…</option>
-                                        {(['G', 'A', 'P', 'S', 'M', 'E'] as const).map((cat) => {
-                                          const inCat = options.filter((s) => s.category === cat)
-                                          if (inCat.length === 0) return null
-                                          return (
-                                            <optgroup key={cat} label={cat}>
-                                              {inCat.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                            </optgroup>
-                                          )
-                                        })}
-                                      </select>
-                                      <button type="submit"
-                                        className="px-2 py-0.5 rounded-sm border border-bb-gold/50 text-bb-gold text-[10px] font-heading uppercase hover:bg-bb-gold hover:text-bb-dark transition-colors">
-                                        Learn
-                                      </button>
-                                    </form>
+                                    <SkillPickerModal rollId={roll.id} options={options} pickSkill={pickSkill} />
                                     {availableStatOptions.length > 0 && (
                                       <form action={pickStatIncrease} className="mt-1 flex items-center gap-1">
                                         <input type="hidden" name="rollId" value={roll.id} />
