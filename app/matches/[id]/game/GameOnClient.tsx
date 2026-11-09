@@ -433,10 +433,88 @@ function RosterModal({
             <p className="text-xs text-bb-muted">{team.raceName} · {players.length} players</p>
           </div>
           <button
+            onClick={() => window.print()}
+            className="shrink-0 w-8 h-8 flex items-center justify-center text-bb-muted hover:text-bb-gold transition-colors rounded-sm"
+            aria-label="Print roster"
+            title="Print roster"
+          >🖨️</button>
+          <button
             onClick={onClose}
             className="shrink-0 w-8 h-8 flex items-center justify-center text-bb-muted hover:text-white transition-colors rounded-sm"
             aria-label="Close"
           >✕</button>
+        </div>
+
+        {/* Printable roster sheet — screen-hidden, print-only (landscape, see globals.css) */}
+        <div id="roster-print-area" className="hidden print:block bg-white text-black p-8">
+          <div className="flex items-center gap-4 mb-4 border-b border-black pb-3">
+            {logo && <img src={logo} alt={team.raceName} className="w-16 h-16 object-contain" />}
+            <div>
+              <h1 className="text-2xl font-bold">{team.name}</h1>
+              <p className="text-sm">{team.raceName} · Match Roster</p>
+            </div>
+          </div>
+
+          <table className="w-full text-xs border-collapse mb-6">
+            <thead>
+              <tr className="border-b-2 border-black text-left">
+                <th className="py-1 pr-2">#</th>
+                <th className="py-1 pr-2">Name</th>
+                <th className="py-1 pr-2">Position</th>
+                <th className="py-1 pr-2 text-center">MA</th>
+                <th className="py-1 pr-2 text-center">ST</th>
+                <th className="py-1 pr-2 text-center">AG</th>
+                <th className="py-1 pr-2 text-center">AV</th>
+                <th className="py-1">Skills</th>
+              </tr>
+            </thead>
+            <tbody>
+              {players.map((p) => (
+                <tr key={p.id} className="border-b border-gray-400">
+                  <td className="py-1 pr-2">{p.number}</td>
+                  <td className="py-1 pr-2">{p.name ?? p.playerTypeName}{p.status === 'MNG' ? ' (MNG)' : ''}</td>
+                  <td className="py-1 pr-2">{p.playerTypeName}</td>
+                  <td className="py-1 pr-2 text-center">{p.ma}</td>
+                  <td className="py-1 pr-2 text-center">{p.st}</td>
+                  <td className="py-1 pr-2 text-center">{p.ag}</td>
+                  <td className="py-1 pr-2 text-center">{p.av}</td>
+                  <td className="py-1">{p.skills.map((s) => s.name).join(', ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {(inducements.length > 0 || specialCards.length > 0 || hidden) && (
+            <div>
+              <h2 className="text-lg font-bold mb-2 border-b border-black pb-1">Purchased Benefits</h2>
+              {hidden ? (
+                <p className="text-sm italic">Kept secret until kickoff — {hiddenSpend ?? 0}g committed so far.</p>
+              ) : (
+                <div className="space-y-2 text-xs">
+                  {inducements.map((ind) => (
+                    <div key={ind.id}>
+                      <p className="font-bold">{ind.name}</p>
+                      <p className="whitespace-pre-line">{ind.rule}</p>
+                    </div>
+                  ))}
+                  {specialCards.map((slot) => {
+                    const deck = specialPlayDecks.find((d) => d.id === slot.deckId)
+                    const card = slot.cardId ? deck?.cards.find((c) => c.id === slot.cardId) ?? null : null
+                    return (
+                      <div key={slot.id}>
+                        <p className="font-bold">🃏 {slot.deckName}{card ? ` — ${card.name}` : ''}</p>
+                        {card ? (
+                          <p className="whitespace-pre-line">{card.timing} — {card.effect || card.description}</p>
+                        ) : (
+                          <p className="italic">Not yet drawn</p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Player list */}

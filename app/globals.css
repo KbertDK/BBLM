@@ -35,3 +35,22 @@
     text-wrap: balance;
   }
 }
+
+/* Print just the Game On roster sheet (#roster-print-area), landscape, nothing else on the page. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #roster-print-area,
+  #roster-print-area * {
+    visibility: visible;
+  }
+  #roster-print-area {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+  }
+  @page {
+    size: landscape;
+  }
+}
