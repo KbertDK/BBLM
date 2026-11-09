@@ -5,7 +5,7 @@ import { getSession } from '@/lib/auth'
 import { skillRollsAvailable } from '@/lib/ssp'
 import { computeTV } from '@/lib/teamValue'
 import { getPendingJourneymen } from '@/lib/queries/teams'
-import { isMatchParticipant } from '@/lib/matchLock'
+import { isMatchParticipant, resolveViewerSide } from '@/lib/matchLock'
 import GameOnClient, { type MatchEvent } from './GameOnClient'
 
 interface PageProps {
@@ -74,6 +74,16 @@ export default async function GameOnPage({ params }: PageProps) {
   if (!match) redirect('/')
 
   if (!isMatchParticipant(session, match)) redirect('/')
+
+  // Match-day purchases (mercs, star players, inducements, special cards) are secret from the
+  // opposing coach until kickoff — revealed automatically once the match goes LIVE. Admin/Commish
+  // ('neutral') always see full detail, as neutral referees.
+  const viewerSide = resolveViewerSide(session, match)
+  const redactedSide: 'home' | 'away' | null =
+    match.status !== 'SCHEDULED' ? null :
+    viewerSide === 'home' ? 'away' :
+    viewerSide === 'away' ? 'home' :
+    null
 
   if (match.status === 'COMPLETED') {
     return (
@@ -418,6 +428,19 @@ export default async function GameOnPage({ params }: PageProps) {
   const homeInducementValue = homeJourneymenValue + homeMercsValue + homeStarsValue
   const awayInducementValue = awayJourneymenValue + awayMercsValue + awayStarsValue
 
+  // Total gold actually spent on secret match-day purchases (mercs/stars/inducements/special
+  // cards) — shown to the opposing coach in place of the itemized picks while redacted.
+  const homeHiddenSpend =
+    matchMercs.filter((m) => m.side === 'home').reduce((s, m) => s + m.cost, 0) +
+    matchStarRows.filter((m) => m.side === 'home').reduce((s, m) => s + m.price, 0) +
+    matchInducements.filter((m) => m.side === 'home').reduce((s, m) => s + m.cost, 0) +
+    matchSpecialPlayCards.filter((m) => m.side === 'home').reduce((s, m) => s + m.cost, 0)
+  const awayHiddenSpend =
+    matchMercs.filter((m) => m.side === 'away').reduce((s, m) => s + m.cost, 0) +
+    matchStarRows.filter((m) => m.side === 'away').reduce((s, m) => s + m.price, 0) +
+    matchInducements.filter((m) => m.side === 'away').reduce((s, m) => s + m.cost, 0) +
+    matchSpecialPlayCards.filter((m) => m.side === 'away').reduce((s, m) => s + m.cost, 0)
+
   // Eligible journeyman positions: the race's basic "filler" position(s), identified by maxCount >= 10
   const mapJourneymanTypes = (pts: typeof homePlayerTypes) =>
     pts
@@ -461,10 +484,10 @@ export default async function GameOnPage({ params }: PageProps) {
       })
   }
 
-  const homeInducementsPurchased = matchInducements
+  const homeInducementsPurchased = redactedSide === 'home' ? [] : matchInducements
     .filter((m) => m.side === 'home')
     .map((m) => ({ id: m.id, inducementId: m.inducementId, name: m.inducement.name, cost: m.cost, rule: m.inducement.rule, used: m.used, chefHalf1Used: m.chefHalf1Used, chefHalf2Used: m.chefHalf2Used }))
-  const awayInducementsPurchased = matchInducements
+  const awayInducementsPurchased = redactedSide === 'away' ? [] : matchInducements
     .filter((m) => m.side === 'away')
     .map((m) => ({ id: m.id, inducementId: m.inducementId, name: m.inducement.name, cost: m.cost, rule: m.inducement.rule, used: m.used, chefHalf1Used: m.chefHalf1Used, chefHalf2Used: m.chefHalf2Used }))
 
@@ -485,8 +508,8 @@ export default async function GameOnPage({ params }: PageProps) {
       cardName:  m.card?.name ?? null,
       turn:      m.turn,
     }))
-  const homeSpecialPlayCards = mapSpecialPlayCards('home')
-  const awaySpecialPlayCards = mapSpecialPlayCards('away')
+  const homeSpecialPlayCards = redactedSide === 'home' ? [] : mapSpecialPlayCards('home')
+  const awaySpecialPlayCards = redactedSide === 'away' ? [] : mapSpecialPlayCards('away')
 
   const wizardDone = match.homeTeamValue !== null
 
@@ -495,6 +518,10 @@ export default async function GameOnPage({ params }: PageProps) {
     status:            match.status as 'SCHEDULED' | 'LIVE',
     round:             match.round,
     wizardDone,
+    viewerSide,
+    redactedSide,
+    homeHiddenSpend:   redactedSide === 'home' ? homeHiddenSpend : null,
+    awayHiddenSpend:   redactedSide === 'away' ? awayHiddenSpend : null,
     homeTeamValue:     computeTV(match.homeTeam, homeInducementValue),
     awayTeamValue:     computeTV(match.awayTeam, awayInducementValue),
     // Frozen roster-only value (excludes this match's journeymen/mercs/stars) — the correct
@@ -563,8 +590,8 @@ export default async function GameOnPage({ params }: PageProps) {
           skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
           isMerc:         false as const,
         })),
-        ...homeMercPlayers,
-        ...homeStarLinePlayers,
+        ...(redactedSide === 'home' ? [] : homeMercPlayers),
+        ...(redactedSide === 'home' ? [] : homeStarLinePlayers),
         ...homeJourneymanPlayers,
       ],
     },
@@ -589,8 +616,8 @@ export default async function GameOnPage({ params }: PageProps) {
           skills:         p.playerType.startingSkills.map((s) => ({ name: s.name, rule: s.skillRule })),
           isMerc:         false as const,
         })),
-        ...awayMercPlayers,
-        ...awayStarLinePlayers,
+        ...(redactedSide === 'away' ? [] : awayMercPlayers),
+        ...(redactedSide === 'away' ? [] : awayStarLinePlayers),
         ...awayJourneymanPlayers,
       ],
     },

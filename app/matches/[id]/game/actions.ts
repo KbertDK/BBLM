@@ -10,7 +10,7 @@ import { computePettyCashReturn } from '@/lib/postMatchFinance'
 import { computeTV } from '@/lib/teamValue'
 import { generateMatchRecap } from '@/lib/recap'
 import { expectedScore, newRating } from '@/lib/elo'
-import { hasActiveMatch, isMatchParticipant } from '@/lib/matchLock'
+import { hasActiveMatch, isMatchParticipant, resolveViewerSide } from '@/lib/matchLock'
 
 async function requireMatchParticipant(matchId: string) {
   const session = await getSession()
@@ -26,6 +26,29 @@ async function requireMatchParticipant(matchId: string) {
   if (!match) return null
 
   return isMatchParticipant(session, match) ? session : null
+}
+
+// Like requireMatchParticipant, but additionally only allows the coach who owns `side` (or
+// Admin/Commish) through — used for match-day purchases, which are secret from the opposing
+// coach until kickoff (app code, not just UI, must enforce this: the opposing coach's own
+// login could otherwise call these directly regardless of what the UI shows them).
+async function requireSideParticipant(matchId: string, side: 'home' | 'away') {
+  const session = await getSession()
+  if (!session) return null
+
+  const match = await prisma.match.findUnique({
+    where:  { id: matchId },
+    select: {
+      homeTeam: { select: { coachId: true } },
+      awayTeam: { select: { coachId: true } },
+    },
+  })
+  if (!match) return null
+
+  const viewerSide = resolveViewerSide(session, match)
+  if (viewerSide === null) return null
+  if (viewerSide !== 'neutral' && viewerSide !== side) return null
+  return session
 }
 
 // Maps short game event codes to MdMatchEvent names for FK lookup
@@ -206,21 +229,23 @@ export async function saveFansAndFame(
 }
 
 export async function hireMerc(matchId: string, side: 'home' | 'away', playerTypeId: string, cost: number) {
-  const session = await requireMatchParticipant(matchId)
+  const session = await requireSideParticipant(matchId, side)
   if (!session) return
   await prisma.matchMerc.create({ data: { matchId, side, playerTypeId, cost } })
   revalidatePath(`/matches/${matchId}/game`)
 }
 
 export async function removeMerc(matchId: string, mercId: string) {
-  const session = await requireMatchParticipant(matchId)
+  const merc = await prisma.matchMerc.findUnique({ where: { id: mercId }, select: { matchId: true, side: true } })
+  if (!merc || merc.matchId !== matchId) return
+  const session = await requireSideParticipant(matchId, merc.side as 'home' | 'away')
   if (!session) return
   await prisma.matchMerc.deleteMany({ where: { id: mercId, matchId } })
   revalidatePath(`/matches/${matchId}/game`)
 }
 
 export async function hireStarPlayer(matchId: string, side: 'home' | 'away', starPlayerId: string, price: number) {
-  const session = await requireMatchParticipant(matchId)
+  const session = await requireSideParticipant(matchId, side)
   if (!session) return
   const exists = await prisma.matchStarPlayer.findFirst({ where: { matchId, side, starPlayerId } })
   if (exists) return
@@ -240,10 +265,10 @@ export async function hireStarPlayer(matchId: string, side: 'home' | 'away', sta
 }
 
 export async function removeStarPlayer(matchId: string, id: string) {
-  const session = await requireMatchParticipant(matchId)
-  if (!session) return
   const record = await prisma.matchStarPlayer.findUnique({ where: { id } })
-  if (!record || record.isCompanion) return
+  if (!record || record.matchId !== matchId || record.isCompanion) return
+  const session = await requireSideParticipant(matchId, record.side as 'home' | 'away')
+  if (!session) return
   const sp = await prisma.mdStarPlayer.findUnique({
     where: { id: record.starPlayerId },
     select: { companions: { select: { id: true } } },
@@ -280,7 +305,7 @@ export async function updateJourneymanNumber(matchId: string, journeymanId: stri
 }
 
 export async function hireInducement(matchId: string, side: 'home' | 'away', inducementId: string, cost: number) {
-  const session = await requireMatchParticipant(matchId)
+  const session = await requireSideParticipant(matchId, side)
   if (!session) return
   const inducement = await prisma.mdInducement.findUnique({ where: { id: inducementId } })
   if (!inducement) return
@@ -291,14 +316,16 @@ export async function hireInducement(matchId: string, side: 'home' | 'away', ind
 }
 
 export async function removeInducement(matchId: string, id: string) {
-  const session = await requireMatchParticipant(matchId)
+  const inducement = await prisma.matchInducement.findUnique({ where: { id }, select: { matchId: true, side: true } })
+  if (!inducement || inducement.matchId !== matchId) return
+  const session = await requireSideParticipant(matchId, inducement.side as 'home' | 'away')
   if (!session) return
   await prisma.matchInducement.deleteMany({ where: { id, matchId } })
   revalidatePath(`/matches/${matchId}/game`)
 }
 
 export async function buySpecialPlayCard(matchId: string, side: 'home' | 'away', deckId: string) {
-  const session = await requireMatchParticipant(matchId)
+  const session = await requireSideParticipant(matchId, side)
   if (!session) return
   const deck = await prisma.mdSpecialPlayDeck.findUnique({ where: { id: deckId } })
   if (!deck) return
@@ -307,7 +334,9 @@ export async function buySpecialPlayCard(matchId: string, side: 'home' | 'away',
 }
 
 export async function removeSpecialPlayCard(matchId: string, id: string) {
-  const session = await requireMatchParticipant(matchId)
+  const card = await prisma.matchSpecialPlayCard.findUnique({ where: { id }, select: { matchId: true, side: true, cardId: true } })
+  if (!card || card.matchId !== matchId || card.cardId !== null) return
+  const session = await requireSideParticipant(matchId, card.side as 'home' | 'away')
   if (!session) return
   // Only an un-revealed draw may be cancelled — one already played live is locked in.
   await prisma.matchSpecialPlayCard.deleteMany({ where: { id, matchId, cardId: null } })

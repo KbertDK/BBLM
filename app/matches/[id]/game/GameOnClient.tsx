@@ -105,6 +105,13 @@ export interface MatchData {
   status:            'SCHEDULED' | 'LIVE'
   round:             number
   wizardDone:        boolean
+  // Secret match-day purchases: which side (if any) this viewer's opposing coach's picks are
+  // currently redacted for. null once LIVE (everything is revealed at kickoff) or for a neutral
+  // (Admin/Commish) viewer. The corresponding *HiddenSpend total is only set for that side.
+  viewerSide:        'home' | 'away' | 'neutral' | null
+  redactedSide:      'home' | 'away' | null
+  homeHiddenSpend:   number | null
+  awayHiddenSpend:   number | null
   homeTeamValue:     number
   awayTeamValue:     number
   homeBaseTeamValue: number
@@ -1484,14 +1491,46 @@ export default function GameOnClient({ matchData }: Props) {
           const awayBudget   = (receivingTeam === 'away' ? inducementGp : 0) + awayPettyGold
           const homeShopping = homeBudget > 0
           const awayShopping = awayBudget > 0
-          const homeSpent     = matchData.homeTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
+          // When a side is redacted, its real spend still comes from the server (homeHiddenSpend/
+          // awayHiddenSpend) — the opponent sees the total, just not which items it was spent on.
+          const homeSpent     = matchData.redactedSide === 'home' ? (matchData.homeHiddenSpend ?? 0) :
+                                matchData.homeTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
                               + matchData.homeInducementsPurchased.reduce((s, p) => s + p.cost, 0)
                               + matchData.homeSpecialPlayCards.reduce((s, p) => s + p.cost, 0)
-          const awaySpent     = matchData.awayTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
+          const awaySpent     = matchData.redactedSide === 'away' ? (matchData.awayHiddenSpend ?? 0) :
+                                matchData.awayTeam.players.filter((p) => p.isMerc).reduce((s, p) => s + (p.mercCost ?? 0), 0)
                               + matchData.awayInducementsPurchased.reduce((s, p) => s + p.cost, 0)
                               + matchData.awaySpecialPlayCards.reduce((s, p) => s + p.cost, 0)
           const homeRemaining = homeBudget - homeSpent
           const awayRemaining = awayBudget - awaySpent
+
+          // Shown in place of InducementPanel for the opposing coach's side while it's secret —
+          // the total gold committed is real (from the server), the items are not sent at all.
+          function RedactedPanel({ side, hiddenSpend }: { side: 'home' | 'away'; hiddenSpend: number }) {
+            const teamName = side === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+            return (
+              <div className="flex flex-col gap-2">
+                <div className="bg-bb-dark border border-bb-border rounded-sm px-4 py-2.5 flex items-center justify-between shrink-0">
+                  <div>
+                    <span className="text-xs text-bb-muted font-heading uppercase tracking-wider">Inducement Budget — </span>
+                    <span className="text-xs text-white font-heading">{teamName}</span>
+                  </div>
+                  <div className="flex gap-4 text-xs font-mono">
+                    <span className="text-bb-muted">Spent: <span className="text-bb-crimson">{hiddenSpend.toLocaleString()}</span></span>
+                  </div>
+                </div>
+                <div className="bg-bb-dark border border-bb-border rounded-sm flex-1 flex items-center justify-center py-10">
+                  <div className="text-center max-w-xs">
+                    <p className="text-2xl mb-2">🤫</p>
+                    <p className="text-sm text-bb-gold font-heading">Picks kept secret until kickoff</p>
+                    <p className="text-xs text-bb-muted mt-2">
+                      {teamName} has committed {hiddenSpend.toLocaleString()} gold to mercs, star players, inducements, and special cards — what exactly they bought is revealed once the match goes live.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )
+          }
 
           function InducementPanel({ side }: { side: 'home' | 'away' }) {
             const budget      = side === 'home' ? homeBudget : awayBudget
@@ -1883,8 +1922,12 @@ export default function GameOnClient({ matchData }: Props) {
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col gap-4 overflow-auto">
-                  {homeShopping && <InducementPanel side="home" />}
-                  {awayShopping && <InducementPanel side="away" />}
+                  {homeShopping && (matchData.redactedSide === 'home'
+                    ? <RedactedPanel side="home" hiddenSpend={matchData.homeHiddenSpend ?? 0} />
+                    : <InducementPanel side="home" />)}
+                  {awayShopping && (matchData.redactedSide === 'away'
+                    ? <RedactedPanel side="away" hiddenSpend={matchData.awayHiddenSpend ?? 0} />
+                    : <InducementPanel side="away" />)}
                 </div>
               )}
 

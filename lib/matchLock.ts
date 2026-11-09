@@ -38,3 +38,18 @@ export function isMatchParticipant(session: ParticipantSession | null, match: Ma
     session.role === 'ADMIN'
   )
 }
+
+// Which side of the match this session is — 'neutral' for Admin/Commish (full visibility,
+// no side ownership), null if they're not a participant at all. Used both to gate side-specific
+// actions (a coach may only act on their own side) and to decide what to redact in the display
+// (an opposing coach's pre-kickoff purchases).
+export function resolveViewerSide(
+  session: ParticipantSession | null,
+  match: MatchCoaches,
+): 'home' | 'away' | 'neutral' | null {
+  if (!session) return null
+  if (session.role === 'ADMIN' || session.role === 'COMMISH') return 'neutral'
+  if (session.coachId === match.homeTeam.coachId) return 'home'
+  if (session.coachId === match.awayTeam.coachId) return 'away'
+  return null
+}
