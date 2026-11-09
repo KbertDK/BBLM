@@ -3,9 +3,11 @@ import prisma from '@/lib/prisma'
 import { getLatestNews } from '@/lib/queries/news'
 import { getUpcomingMatches, getLiveMatches, getLatestResults } from '@/lib/queries/matches'
 import { getTeamsByCoach } from '@/lib/queries/teams'
+import { getHomeStandings } from '@/lib/queries/standings'
 import { getSession } from '@/lib/auth'
 import NewsSection from '@/components/news/NewsSection'
 import MatchesPanel from '@/components/matches/MatchesPanel'
+import StandingsSection from '@/components/standings/StandingsSection'
 import TeamQuickAccess from '@/components/teams/TeamQuickAccess'
 import SponsorBanner from '@/components/adverts/SponsorBanner'
 import LeagueFilter from '@/components/LeagueFilter'
@@ -31,12 +33,13 @@ export default async function HomePage({
     activeLeagueId = coach?.primaryLeagueId ?? undefined
   }
 
-  const [news, upcoming, live, results, myTeams, leagues] = await Promise.all([
+  const [news, upcoming, live, results, myTeams, standings, leagues] = await Promise.all([
     getLatestNews(),
     getUpcomingMatches(activeLeagueId),
     getLiveMatches(activeLeagueId),
     getLatestResults(activeLeagueId),
     session ? getTeamsByCoach(session.coachId) : Promise.resolve(null),
+    getHomeStandings(activeLeagueId),
     prisma.league.findMany({
       where:   { isHidden: false },
       orderBy: { createdAt: 'asc' },
@@ -74,6 +77,12 @@ export default async function HomePage({
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16 flex flex-col gap-20">
         <MatchesPanel upcoming={upcoming} live={live} results={results} />
+        <StandingsSection
+          teamRows={standings.teamRows}
+          topScorers={standings.topScorers}
+          topCasualties={standings.topCasualties}
+          topPassers={standings.topPassers}
+        />
         <div>
           <NewsSection posts={news} />
           <div className="flex justify-center mt-6">
