@@ -40,3 +40,6 @@ prisma/*.db
 
 # Large media assets kept out of git — deployed manually to each server
 /public/Podcast/
+
+# User-uploaded content, served dynamically (see app/api/gallery-image) — not static app assets
+/uploads/
