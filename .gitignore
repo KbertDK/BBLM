@@ -37,3 +37,6 @@ next-env.d.ts
 
 # Prisma
 prisma/*.db
+
+# Large media assets kept out of git — deployed manually to each server
+/public/Podcast/

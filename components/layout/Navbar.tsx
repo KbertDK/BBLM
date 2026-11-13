@@ -13,6 +13,7 @@ const authLinks = [
   { href: '/standings',   label: 'Standings' },
   { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/rules',       label: 'Rules' },
+  { href: '/hobby',       label: 'Hobby' },
 ]
 
 export default async function Navbar() {

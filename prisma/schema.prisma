@@ -98,6 +98,7 @@ model Coach {
   eloRating       Float      @default(1500)
   newsPosts       NewsPost[]
   commishNews     CommishNews[]
+  galleryPosts    GalleryPost[]
   teams           Team[]
   primaryLeague   League?    @relation("CoachPrimaryLeague", fields: [primaryLeagueId], references: [id], onDelete: SetNull)
   resetTokens     PasswordResetToken[]
@@ -454,6 +455,15 @@ model NewsPost {
   author      Coach        @relation(fields: [authorId], references: [id])
   match       Match?       @relation(fields: [matchId], references: [id])
   commishNews CommishNews?
+}
+
+model GalleryPost {
+  id          String   @id @default(cuid())
+  coachId     String
+  imageUrl    String
+  description String
+  createdAt   DateTime @default(now())
+  coach       Coach    @relation(fields: [coachId], references: [id])
 }
 
 enum CoachRole {
