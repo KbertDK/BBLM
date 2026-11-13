@@ -2,6 +2,7 @@ import { getSession } from '@/lib/auth'
 import { getGalleryPosts } from '@/lib/queries/gallery'
 import SectionHeading from '@/components/ui/SectionHeading'
 import GalleryUploadForm from './GalleryUploadForm'
+import DeleteGalleryButton from './DeleteGalleryButton'
 import PodcastPlayer from './PodcastPlayer'
 
 export const revalidate = 0
@@ -76,13 +77,20 @@ export default async function HobbyPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {posts.map((post) => (
                 <div key={post.id} className="bg-bb-dark border border-bb-border rounded-sm overflow-hidden">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={post.imageUrl} alt={post.description} className="w-full h-48 object-cover" />
+                  <a href={`/hobby/gallery/${post.id}`} target="_blank" rel="noopener noreferrer" title="Open full screen">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={post.imageUrl} alt={post.description} className="w-full h-48 object-cover hover:opacity-90 transition-opacity" />
+                  </a>
                   <div className="p-4">
                     <p className="text-sm text-white leading-snug mb-2">{post.description}</p>
-                    <p className="text-[11px] text-bb-muted/60">
-                      by {post.coach.alias ?? post.coach.name} · {post.createdAt.toLocaleDateString()}
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] text-bb-muted/60">
+                        by {post.coach.alias ?? post.coach.name} · {post.createdAt.toLocaleDateString()}
+                      </p>
+                      {session?.coachId === post.coachId && (
+                        <DeleteGalleryButton postId={post.id} />
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}

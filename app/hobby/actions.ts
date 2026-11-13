@@ -38,3 +38,19 @@ export async function uploadGalleryPost(formData: FormData): Promise<{ error?: s
 
   revalidatePath('/hobby')
 }
+
+export async function deleteGalleryPost(postId: string): Promise<{ error?: string } | void> {
+  const session = await getSession()
+  if (!session) return { error: 'Unauthorized' }
+
+  const post = await prisma.galleryPost.findUnique({
+    where:  { id: postId },
+    select: { coachId: true, imageUrl: true },
+  })
+  if (!post || post.coachId !== session.coachId) return { error: 'Unauthorized' }
+
+  await prisma.galleryPost.delete({ where: { id: postId } })
+  await fs.unlink(path.join(process.cwd(), 'public', post.imageUrl)).catch(() => {})
+
+  revalidatePath('/hobby')
+}
