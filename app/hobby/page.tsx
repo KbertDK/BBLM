@@ -2,18 +2,9 @@ import { getSession } from '@/lib/auth'
 import { getGalleryPosts } from '@/lib/queries/gallery'
 import SectionHeading from '@/components/ui/SectionHeading'
 import GalleryUploadForm from './GalleryUploadForm'
+import PodcastPlayer from './PodcastPlayer'
 
 export const revalidate = 0
-
-const PODCAST_DIR = '/Podcast/Tackle Zone Radio'
-
-const episodes = [
-  { file: 'TZR000.mp3', title: 'Tackle Zone Radio #000 – Beginners Guide' },
-  { file: 'TZR001.mp3', title: 'Tackle Zone Radio #001 – The Kick Off' },
-  { file: 'TZR002.mp3', title: 'Tackle Zone Radio #002 – Know Your Role' },
-  { file: 'TZR003.mp3', title: 'Tackle Zone Radio #003 – Entering in to a new age' },
-  { file: 'TZR004.mp3', title: 'Tackle Zone Radio #004 – What Is Wrong with deodorant!' },
-]
 
 export default async function HobbyPage() {
   const [session, posts] = await Promise.all([
@@ -104,25 +95,10 @@ export default async function HobbyPage() {
           <h2 className="font-heading text-2xl font-bold text-bb-gold uppercase tracking-widest text-center mb-6">
             🎙 OldCast
           </h2>
-          <div className="flex flex-col items-center gap-4 mb-6">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={encodeURI(`${PODCAST_DIR}/Folder.jpg`)}
-              alt="Tackle Zone Radio"
-              className="w-40 h-40 object-contain rounded-sm border border-bb-border"
-            />
-            <p className="text-bb-muted text-sm text-center max-w-md">
-              Five episodes of Tackle Zone Radio, kept here for posterity.
-            </p>
-          </div>
-          <div className="space-y-4 max-w-2xl mx-auto">
-            {episodes.map((ep) => (
-              <div key={ep.file} className="bg-bb-dark border border-bb-border rounded-sm px-4 py-3">
-                <p className="text-sm text-white mb-2">{ep.title}</p>
-                <audio controls className="w-full" src={encodeURI(`${PODCAST_DIR}/${ep.file}`)} />
-              </div>
-            ))}
-          </div>
+          <p className="text-bb-muted text-sm text-center max-w-md mx-auto mb-6">
+            Five episodes of Tackle Zone Radio, kept here for posterity.
+          </p>
+          <PodcastPlayer />
         </section>
       </div>
     </div>
