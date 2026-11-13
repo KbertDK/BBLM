@@ -8,11 +8,11 @@ export const revalidate = 0
 const PODCAST_DIR = '/Podcast/Tackle Zone Radio'
 
 const episodes = [
-  { file: 'Tackle Zone Radio #000 – Beginners G.mp3', title: 'Tackle Zone Radio #000 – Beginners Guide' },
-  { file: 'Tackle Zone Radio #001 – The Kick Of.mp3',  title: 'Tackle Zone Radio #001 – The Kick Off' },
-  { file: 'Tackle Zone Radio #002 – Know Your R.mp3',  title: 'Tackle Zone Radio #002 – Know Your Role' },
-  { file: 'Tackle Zone Radio #003 – Entering in.mp3',  title: 'Tackle Zone Radio #003 – Entering in to a new age' },
-  { file: 'Tackle Zone Radio #004 – What Is Wro.mp3',  title: 'Tackle Zone Radio #004 – What Is Wrong with deodorant!' },
+  { file: 'TZR000.mp3', title: 'Tackle Zone Radio #000 – Beginners Guide' },
+  { file: 'TZR001.mp3', title: 'Tackle Zone Radio #001 – The Kick Off' },
+  { file: 'TZR002.mp3', title: 'Tackle Zone Radio #002 – Know Your Role' },
+  { file: 'TZR003.mp3', title: 'Tackle Zone Radio #003 – Entering in to a new age' },
+  { file: 'TZR004.mp3', title: 'Tackle Zone Radio #004 – What Is Wrong with deodorant!' },
 ]
 
 export default async function HobbyPage() {
