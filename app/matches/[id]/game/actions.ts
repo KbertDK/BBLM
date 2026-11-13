@@ -75,6 +75,7 @@ interface PushableMatchEvent {
   attackerId?:    string
   victimId?:      string
   casualtyResult?: string
+  casualtyResult2?: string
   medicalLabel?:  string
   interceptorId?: string
 }

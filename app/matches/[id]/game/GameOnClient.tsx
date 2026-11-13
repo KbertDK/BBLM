@@ -184,6 +184,7 @@ export interface MatchEvent {
   attackerId?:    string
   victimId?:      string
   casualtyResult?: CasualtyResult
+  casualtyResult2?: CasualtyResult  // Decay skill: a second roll applied alongside the first
   medicalLabel?:  string        // set when a medical option (apothecary/Igor/etc.) was used on this casualty
   // INTERCEPTION
   interceptorId?: string
@@ -205,7 +206,7 @@ type MedicalOption = { kind: 'apothecary' | 'matchInducement'; id?: string; labe
 
 type ModalState =
   | { type: 'td';          step: 0 | 1 | 2 | 3; eventTurn: number | null; team: 'home' | 'away' | null; scorerId: string | null; hasPass: boolean; passerId: string | null }
-  | { type: 'casualty';    step: 0 | 1 | 2 | 3 | 4 | 5; eventTurn: number | null; attackTeam: 'home' | 'away' | null; attackerId: string | null; victimId: string | null; result: CasualtyResult | null; medical: MedicalOption | null }
+  | { type: 'casualty';    step: 0 | 1 | 2 | 3 | 4 | 5; eventTurn: number | null; attackTeam: 'home' | 'away' | 'event' | null; attackerId: string | null; victimId: string | null; eventReason: 'dodge' | 'gfi' | 'other' | null; result: CasualtyResult | null; result2: CasualtyResult | null; medical: MedicalOption | null }
   | { type: 'interception'; step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; playerId: string | null }
   | { type: 'completion';   step: 0 | 1 | 2; eventTurn: number | null; team: 'home' | 'away' | null; passerId: string | null }
   | { type: 'inducements' }
@@ -325,13 +326,20 @@ function computePlayerUpdates(
   const lineupSet = new Set(allPlayers.filter((p) => p.status !== 'MNG').map((p) => p.id))
   const mvpSet    = new Set([mvp.home, mvp.away].filter(Boolean) as string[])
 
-  // Worst casualty result per victim
-  const worstCas = new Map<string, CasualtyResult>()
+  // Worst casualty result per victim. A player with the Decay skill rolls twice on the
+  // Casualty table and applies both results (CRP1) — e.g. two Niggling rolls genuinely
+  // stack into two separate Niggling Injury counters, so track that alongside the single
+  // "worst" value that still drives the one-missed-match status.
+  const worstCas         = new Map<string, CasualtyResult>()
+  const nigglingStacksRaw = new Map<string, number>()
   for (const e of events) {
     if (e.type === 'CASUALTY' && e.victimId && e.casualtyResult) {
+      const results = [e.casualtyResult, e.casualtyResult2].filter((r): r is CasualtyResult => !!r)
+      const worstOfEvent = results.reduce((a, b) => (CAS_SEVERITY[b] > CAS_SEVERITY[a] ? b : a))
       const existing = worstCas.get(e.victimId)
-      if (!existing || CAS_SEVERITY[e.casualtyResult] > CAS_SEVERITY[existing]) {
-        worstCas.set(e.victimId, e.casualtyResult)
+      if (!existing || CAS_SEVERITY[worstOfEvent] > CAS_SEVERITY[existing]) {
+        worstCas.set(e.victimId, worstOfEvent)
+        nigglingStacksRaw.set(e.victimId, results.filter((r) => r === 'NIGGLING').length)
       }
     }
   }
@@ -373,7 +381,13 @@ function computePlayerUpdates(
       effectiveCas === 'NIGGLING' ? 'MNG'  :
       null
 
-    const deltaNigglingInjuries = !isMercOrStar && effectiveCas === 'NIGGLING' ? 1 : 0
+    // When the coach hasn't overridden the result, a Decay player's two rolls can produce 0-2
+    // Niggling stacks; an override (e.g. an Apothecary save) replaces both rolls with one final
+    // determination, same as it already did for non-Decay players before this change.
+    const nigglingStacks = override
+      ? (override === 'NIGGLING' ? 1 : 0)
+      : (nigglingStacksRaw.get(p.id) ?? 0)
+    const deltaNigglingInjuries = !isMercOrStar ? nigglingStacks : 0
     const isDeathPost = newStatus === 'DEAD'
 
     if (deltaTouchdowns || deltaCompletePasses || deltaInterceptions || deltaCasualties || deltaMVP || newStatus || deltaNigglingInjuries) {
@@ -782,31 +796,26 @@ export default function GameOnClient({ matchData }: Props) {
   const score  = useMemo(() => computeScore(state.events), [state.events])
   const half   = state.turn >= 9 ? 2 : 1
 
+  // Read scoringTeam directly — every CASUALTY event carries it now (block, Event, Throw a
+  // Rock, Wizard), not just ones with an attacking player, so this matches the external
+  // Scoreboard's own computation instead of only ever counting attacker-based casualties.
   const cas = useMemo(() => ({
     home: state.events.filter(
-      (e) => e.type === 'CASUALTY' && e.attackerId &&
-        playerTeam.get(e.attackerId) === 'home' &&
-        e.casualtyResult !== 'KO'
+      (e) => e.type === 'CASUALTY' && e.scoringTeam === 'home' && e.casualtyResult !== 'KO'
     ).length,
     away: state.events.filter(
-      (e) => e.type === 'CASUALTY' && e.attackerId &&
-        playerTeam.get(e.attackerId) === 'away' &&
-        e.casualtyResult !== 'KO'
+      (e) => e.type === 'CASUALTY' && e.scoringTeam === 'away' && e.casualtyResult !== 'KO'
     ).length,
-  }), [state.events, playerTeam])
+  }), [state.events])
 
   const kills = useMemo(() => ({
     home: state.events.filter(
-      (e) => e.type === 'CASUALTY' && e.attackerId &&
-        playerTeam.get(e.attackerId) === 'home' &&
-        e.casualtyResult === 'DEAD'
+      (e) => e.type === 'CASUALTY' && e.scoringTeam === 'home' && e.casualtyResult === 'DEAD'
     ).length,
     away: state.events.filter(
-      (e) => e.type === 'CASUALTY' && e.attackerId &&
-        playerTeam.get(e.attackerId) === 'away' &&
-        e.casualtyResult === 'DEAD'
+      (e) => e.type === 'CASUALTY' && e.scoringTeam === 'away' && e.casualtyResult === 'DEAD'
     ).length,
-  }), [state.events, playerTeam])
+  }), [state.events])
 
   const matchSspMap = useMemo(() => {
     const map = new Map<string, number>()
@@ -851,8 +860,8 @@ export default function GameOnClient({ matchData }: Props) {
   function pushEvent(event: MatchEvent) {
     setState((prev) => ({ ...prev, events: [...prev.events, event] }))
     persistTransition(async () => {
-      const { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, medicalLabel, interceptorId } = event
-      await pushMatchEvent(matchData.id, { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, medicalLabel, interceptorId })
+      const { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, casualtyResult2, medicalLabel, interceptorId } = event
+      await pushMatchEvent(matchData.id, { type, label, scoringTeam, turn, scorerId, passerId, attackerId, victimId, casualtyResult, casualtyResult2, medicalLabel, interceptorId })
     })
   }
 
@@ -1052,12 +1061,16 @@ export default function GameOnClient({ matchData }: Props) {
       const tie = homeTotal === awayTotal
       if (m.rockVictimId && m.rockResult) {
         const v = playerById.get(m.rockVictimId)
+        const victimSide = playerTeam.get(m.rockVictimId)
         pushEvent({ id: uid(), type: 'CASUALTY', turn: m.eventTurn ?? undefined, victimId: m.rockVictimId, casualtyResult: m.rockResult,
+          scoringTeam: victimSide === 'home' ? 'away' : 'home',
           label: `T${m.eventTurn ?? '?'} · 🪨 Throw a Rock → ${v ? playerLabel(v) : '?'} [${m.rockResult}]` })
       }
       if (tie && m.rockVictimId2 && m.rockResult2) {
         const v2 = playerById.get(m.rockVictimId2)
+        const victimSide2 = playerTeam.get(m.rockVictimId2)
         pushEvent({ id: uid(), type: 'CASUALTY', turn: m.eventTurn ?? undefined, victimId: m.rockVictimId2, casualtyResult: m.rockResult2,
+          scoringTeam: victimSide2 === 'home' ? 'away' : 'home',
           label: `T${m.eventTurn ?? '?'} · 🪨 Throw a Rock → ${v2 ? playerLabel(v2) : '?'} [${m.rockResult2}]` })
       }
     }
@@ -1088,16 +1101,39 @@ export default function GameOnClient({ matchData }: Props) {
 
   function commitCasualty() {
     if (modal?.type !== 'casualty') return
-    const { attackTeam, attackerId, victimId, result, eventTurn, medical } = modal
-    if (!attackTeam || !attackerId || !victimId || !result || !eventTurn) return
-    const attacker = playerById.get(attackerId)!
-    const victim   = playerById.get(victimId)!
-    const atkTeam  = attackTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
-    const medicalNote = medical ? ` — saved by ${medical.label}` : ''
-    const label    = `T${eventTurn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${result}]${medicalNote}`
-    pushEvent({ id: uid(), type: 'CASUALTY', turn: eventTurn, scoringTeam: attackTeam, attackerId, victimId, casualtyResult: result, medicalLabel: medical?.label, label })
+    const { attackTeam, attackerId, victimId, eventReason, result, result2, eventTurn, medical } = modal
+    if (!attackTeam || !victimId || !result || !eventTurn) return
+    if (attackTeam !== 'event' && !attackerId) return
+
+    const victim      = playerById.get(victimId)!
+    const victimSide   = playerTeam.get(victimId)
+    const medicalNote  = medical ? ` — saved by ${medical.label}` : ''
+    const resultLabel  = result2 ? `${result}, ${result2}` : result
+
+    let label: string
+    let scoringTeam: 'home' | 'away' | undefined
+    let eventAttackerId: string | undefined
+
+    if (attackTeam === 'event') {
+      // No attacking player — a Dodge/GFI fall or similar. No individual gets SPP for this
+      // (CRP1: "Casualties inflicted in any other way... do not count for Star Player points"),
+      // but the opposing team still gets credit for the Cas/Kill tally.
+      scoringTeam = victimSide === 'home' ? 'away' : 'home'
+      const reasonLabel = eventReason === 'dodge' ? 'Dodge' : eventReason === 'gfi' ? 'Going For It' : 'Event'
+      label = `T${eventTurn} · CAS · ${reasonLabel} → ${playerLabel(victim)} [${resultLabel}]${medicalNote}`
+    } else {
+      const attacker = playerById.get(attackerId!)!
+      const atkTeam  = attackTeam === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
+      scoringTeam = attackTeam
+      eventAttackerId = attackerId!
+      label = `T${eventTurn} · CAS · ${playerLabel(attacker)} (${atkTeam}) → ${playerLabel(victim)} [${resultLabel}]${medicalNote}`
+    }
+
+    pushEvent({
+      id: uid(), type: 'CASUALTY', turn: eventTurn, scoringTeam, attackerId: eventAttackerId, victimId,
+      casualtyResult: result, casualtyResult2: result2 ?? undefined, medicalLabel: medical?.label, label,
+    })
     if (medical) {
-      const victimSide = playerTeam.get(victimId)
       startMercTransition(async () => {
         if (medical.kind === 'apothecary' && victimSide) await markApothecaryUsed(matchData.id, victimSide)
         else if (medical.kind === 'matchInducement' && medical.id) await markInducementUsed(matchData.id, medical.id)
@@ -1138,6 +1174,7 @@ export default function GameOnClient({ matchData }: Props) {
       const victimTeam = playerTeam.get(v.playerId) === 'home' ? matchData.homeTeam.name : matchData.awayTeam.name
       pushEvent({
         id: uid(), type: 'CASUALTY', turn: eventTurn, victimId: v.playerId, casualtyResult: v.result,
+        scoringTeam: side, // the casting side chose the target, even on the rare friendly-fire hit
         label: `T${eventTurn} · WIZARD · ${spellName} → ${playerLabel(victim)} (${victimTeam}) [${v.result}]`,
       })
     }
@@ -2344,7 +2381,7 @@ export default function GameOnClient({ matchData }: Props) {
               <span className="text-base">🏈</span> Touchdown
             </button>
 
-            <button onClick={() => setModal({ type: 'casualty', step: 0, eventTurn: null, attackTeam: null, attackerId: null, victimId: null, result: null, medical: null })}
+            <button onClick={() => setModal({ type: 'casualty', step: 0, eventTurn: null, attackTeam: null, attackerId: null, victimId: null, eventReason: null, result: null, result2: null, medical: null })}
               className={btnCrimson}>
               <span className="text-base">💀</span> Casualty
             </button>
@@ -2563,10 +2600,41 @@ export default function GameOnClient({ matchData }: Props) {
                     )
                   })}
                 </div>
+                <button onClick={() => setModal({ ...modal, step: 2, attackTeam: 'event', attackerId: null })}
+                  className="w-full p-3 border border-bb-border rounded-sm hover:border-bb-gold/50 hover:bg-bb-gold/5 transition-colors text-center">
+                  <div className="font-heading font-bold text-bb-gold text-sm">⚡ Event (no attacker)</div>
+                  <div className="text-xs text-bb-muted mt-0.5">A Dodge/GFI fall or similar — counts as Cas for the opposing team, no individual SPP</div>
+                </button>
                 <button onClick={() => setModal({ ...modal, step: 0 })} className={btnGhost}>← Back</button>
               </>
             )}
-            {modal.step === 2 && modal.attackTeam && (
+            {modal.step === 2 && modal.attackTeam === 'event' && (
+              <>
+                <p className="text-bb-muted text-sm">What caused it?</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {([
+                    { v: 'dodge', label: 'Failed Dodge roll' },
+                    { v: 'gfi',   label: 'Failed Going For It roll' },
+                    { v: 'other', label: 'Other (e.g. weather, misc. event)' },
+                  ] as const).map(({ v, label }) => (
+                    <button key={v} onClick={() => setModal({ ...modal, eventReason: v })}
+                      className={`p-3 rounded-sm border text-sm font-heading text-left transition-colors ${
+                        modal.eventReason === v ? 'bg-bb-gold/20 border-bb-gold text-bb-gold' : 'border-bb-border text-bb-muted hover:border-bb-gold/40 hover:text-white'
+                      }`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex justify-between pt-1">
+                  <button onClick={() => setModal({ ...modal, step: 1 })} className={btnGhost}>← Back</button>
+                  <button onClick={() => setModal({ ...modal, step: 3 })} disabled={!modal.eventReason}
+                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                    Next →
+                  </button>
+                </div>
+              </>
+            )}
+            {modal.step === 2 && modal.attackTeam && modal.attackTeam !== 'event' && (
               <>
                 <p className="text-bb-muted text-sm">Who caused the casualty?</p>
                 <SelectPlayer
@@ -2616,37 +2684,56 @@ export default function GameOnClient({ matchData }: Props) {
                 </div>
               </>
             )}
-            {modal.step === 4 && (
-              <>
-                <p className="text-bb-muted text-sm">Injury result:</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['KO', 'BH', 'MNG', 'NIGGLING', 'DEAD'] as CasualtyResult[]).map((r) => (
-                    <button key={r} onClick={() => setModal({ ...modal, result: r })}
-                      className={`p-3 rounded-sm border text-sm font-heading font-bold uppercase tracking-wider transition-colors ${
-                        modal.result === r
-                          ? 'bg-bb-crimson border-bb-crimson text-white'
-                          : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
-                      }`}>
-                      {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : r === 'NIGGLING' ? '🩹 Niggling' : '💀 Dead'}
+            {modal.step === 4 && (() => {
+              const victim = modal.victimId ? playerById.get(modal.victimId) : undefined
+              const victimHasDecay = victim?.skills.some((s) => s.name === 'Decay') ?? false
+              const pickingSecond  = victimHasDecay && modal.result !== null
+              const currentPick    = pickingSecond ? modal.result2 : modal.result
+              return (
+                <>
+                  <p className="text-bb-muted text-sm">
+                    Injury result{victimHasDecay ? ` (roll ${pickingSecond ? '2' : '1'} of 2 — Decay)` : ''}:
+                  </p>
+                  {victimHasDecay && (
+                    <p className="text-[11px] text-bb-gold/70 italic">
+                      ☠️ This player has Decay — roll twice on the Casualty table and record both results
+                      (they still only miss one match either way).
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['KO', 'BH', 'MNG', 'NIGGLING', 'DEAD'] as CasualtyResult[]).map((r) => (
+                      <button key={r}
+                        onClick={() => setModal(pickingSecond ? { ...modal, result2: r } : { ...modal, result: r, result2: null })}
+                        className={`p-3 rounded-sm border text-sm font-heading font-bold uppercase tracking-wider transition-colors ${
+                          currentPick === r
+                            ? 'bg-bb-crimson border-bb-crimson text-white'
+                            : 'border-bb-border text-bb-muted hover:border-bb-crimson hover:text-white'
+                        }`}>
+                        {r === 'KO' ? '🌀 KO' : r === 'BH' ? '🤕 Badly Hurt' : r === 'MNG' ? '🏥 MNG' : r === 'NIGGLING' ? '🩹 Niggling' : '💀 Dead'}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex justify-between pt-1">
+                    <button
+                      onClick={() => pickingSecond ? setModal({ ...modal, result: null, result2: null }) : setModal({ ...modal, step: 3 })}
+                      className={btnGhost}>
+                      ← Back
                     </button>
-                  ))}
-                </div>
-                <div className="flex justify-between pt-1">
-                  <button onClick={() => setModal({ ...modal, step: 3 })} className={btnGhost}>← Back</button>
-                  <button
-                    onClick={() => {
-                      const victimSide = modal.victimId ? playerTeam.get(modal.victimId) : undefined
-                      const medOptions = victimSide ? availableMedical(victimSide) : []
-                      if (medOptions.length > 0) setModal({ ...modal, step: 5 })
-                      else commitCasualty()
-                    }}
-                    disabled={!modal.result}
-                    className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
-                    {modal.victimId && availableMedical(playerTeam.get(modal.victimId) ?? 'home').length > 0 ? 'Next →' : 'Confirm'}
-                  </button>
-                </div>
-              </>
-            )}
+                    <button
+                      onClick={() => {
+                        const victimSide = modal.victimId ? playerTeam.get(modal.victimId) : undefined
+                        const medOptions = victimSide ? availableMedical(victimSide) : []
+                        if (medOptions.length > 0) setModal({ ...modal, step: 5 })
+                        else commitCasualty()
+                      }}
+                      disabled={!currentPick}
+                      className="px-4 py-2 bg-bb-crimson text-white rounded-sm text-xs font-heading uppercase tracking-widest disabled:opacity-40">
+                      {modal.victimId && availableMedical(playerTeam.get(modal.victimId) ?? 'home').length > 0 ? 'Next →' : 'Confirm'}
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
             {modal.step === 5 && modal.victimId && (
               <>
                 <p className="text-bb-muted text-sm">Use medical staff to try to save them?</p>
