@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { getGalleryPosts } from '@/lib/queries/gallery'
 import DeleteGalleryButton from '../../DeleteGalleryButton'
+import GalleryImage from '../../GalleryImage'
 
 export const revalidate = 0
 
@@ -42,8 +43,7 @@ export default async function GalleryViewerPage({ params }: Props) {
           >‹</Link>
         )}
 
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <GalleryImage
           src={post.imageUrl}
           alt={post.description}
           className="max-h-[75vh] max-w-full object-contain rounded-sm"

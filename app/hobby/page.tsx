@@ -2,6 +2,7 @@ import { getSession } from '@/lib/auth'
 import { getGalleryPosts } from '@/lib/queries/gallery'
 import SectionHeading from '@/components/ui/SectionHeading'
 import GalleryUploadForm from './GalleryUploadForm'
+import GalleryImage from './GalleryImage'
 import DeleteGalleryButton from './DeleteGalleryButton'
 import PodcastPlayer from './PodcastPlayer'
 
@@ -78,8 +79,7 @@ export default async function HobbyPage() {
               {posts.map((post) => (
                 <div key={post.id} className="bg-bb-dark border border-bb-border rounded-sm overflow-hidden">
                   <a href={`/hobby/gallery/${post.id}`} target="_blank" rel="noopener noreferrer" title="Open full screen">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={post.imageUrl} alt={post.description} className="w-full h-48 object-cover hover:opacity-90 transition-opacity" />
+                    <GalleryImage src={post.imageUrl} alt={post.description} className="w-full h-48 object-cover hover:opacity-90 transition-opacity" />
                   </a>
                   <div className="p-4">
                     <p className="text-sm text-white leading-snug mb-2">{post.description}</p>
